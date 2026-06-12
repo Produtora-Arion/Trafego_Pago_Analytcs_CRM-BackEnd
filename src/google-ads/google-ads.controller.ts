@@ -54,4 +54,39 @@ export class GoogleAdsController {
   ) {
     return this.googleAds.getKeywordPerformance(customerId, campaignId, period);
   }
+
+  @Get(':customerId/campaigns/:campaignId/negatives')
+  getNegatives(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+  ) {
+    return this.googleAds.getNegativeKeywords(customerId, campaignId);
+  }
+
+  @Get(':customerId/campaigns/:campaignId/demographics')
+  getDemographics(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Query('period') period = 'LAST_30_DAYS',
+  ) {
+    return this.googleAds.getDemographics(customerId, campaignId, period);
+  }
+
+  @Get(':customerId/campaigns/:campaignId/day-of-week')
+  getDayOfWeek(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Query('period') period = 'LAST_30_DAYS',
+  ) {
+    return this.googleAds.getDayOfWeek(customerId, campaignId, period);
+  }
+
+  @Get(':customerId/campaigns/:campaignId/devices')
+  getDevices(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Query('period') period = 'LAST_30_DAYS',
+  ) {
+    return this.googleAds.getDevices(customerId, campaignId, period);
+  }
 }
