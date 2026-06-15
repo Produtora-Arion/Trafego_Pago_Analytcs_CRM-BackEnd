@@ -25,6 +25,14 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  private buildDateFilter(dateRange: string): string {
+    if (dateRange.startsWith('CUSTOM:')) {
+      const parts = dateRange.split(':');
+      return `BETWEEN '${parts[1]}' AND '${parts[2]}'`;
+    }
+    return `DURING ${dateRange}`;
+  }
+
   async listManagedAccounts() {
     const mccId = this.config.getOrThrow('GOOGLE_MCC_CUSTOMER_ID');
     const customer = this.client.Customer({
@@ -63,7 +71,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.conversions,
         metrics.cost_per_conversion
       FROM customer
-      WHERE segments.date DURING ${dateRange}
+      WHERE segments.date ${this.buildDateFilter(dateRange)}
     `);
 
     if (!rows.length) return { periodo: dateRange, mensagem: 'Sem dados no período.' };
@@ -107,7 +115,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.cost_per_conversion
       FROM campaign
       WHERE campaign.status != 'REMOVED'
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY metrics.cost_micros DESC
     `);
 
@@ -164,7 +172,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.search_rank_lost_impression_share
       FROM campaign
       WHERE campaign.id = ${campaignId}
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
     `);
 
     if (!campaign) return { erro: `Campanha ${campaignId} não encontrada.` };
@@ -226,7 +234,7 @@ export class GoogleAdsService implements OnModuleInit {
       FROM ad_group
       WHERE campaign.id = ${campaignId}
         AND ad_group.status != 'REMOVED'
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY metrics.cost_micros DESC
     `);
 
@@ -268,7 +276,7 @@ export class GoogleAdsService implements OnModuleInit {
       FROM keyword_view
       WHERE ad_group_criterion.status != 'REMOVED'
         ${campaignFilter}
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY metrics.cost_micros DESC
       LIMIT 50
     `);
@@ -344,7 +352,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.conversions
         FROM age_range_view
         WHERE campaign.id = ${campaignId}
-          AND segments.date DURING ${dateRange}
+          AND segments.date ${this.buildDateFilter(dateRange)}
         ORDER BY metrics.impressions DESC
       `),
       customer.query(`
@@ -356,7 +364,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.conversions
         FROM gender_view
         WHERE campaign.id = ${campaignId}
-          AND segments.date DURING ${dateRange}
+          AND segments.date ${this.buildDateFilter(dateRange)}
       `),
       customer.query(`
         SELECT
@@ -367,7 +375,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.conversions
         FROM income_range_view
         WHERE campaign.id = ${campaignId}
-          AND segments.date DURING ${dateRange}
+          AND segments.date ${this.buildDateFilter(dateRange)}
       `),
     ]);
 
@@ -434,7 +442,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.conversions
       FROM campaign
       WHERE campaign.id = ${campaignId}
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY segments.date
     `);
 
@@ -479,7 +487,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.conversions
       FROM campaign
       WHERE campaign.id = ${campaignId}
-        AND segments.date DURING ${dateRange}
+        AND segments.date ${this.buildDateFilter(dateRange)}
     `);
 
     // API v23 returns numeric enum: 2=MOBILE, 3=TABLET, 4=DESKTOP, 5=OTHER, 6=CONNECTED_TV
