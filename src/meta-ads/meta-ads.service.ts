@@ -1,0 +1,342 @@
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class MetaAdsService implements OnModuleInit {
+  private token: string;
+  private readonly base = 'https://graph.facebook.com/v20.0';
+
+  constructor(private readonly config: ConfigService) {}
+
+  onModuleInit() {
+    this.token = this.config.getOrThrow('META_ACCESS_TOKEN');
+  }
+
+  // ─── HTTP helper ──────────────────────────────────────────────────────────
+
+  private async get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+    const url = new URL(`${this.base}${path}`);
+    url.searchParams.set('access_token', this.token);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    const res = await fetch(url.toString());
+    const data = await res.json() as any;
+    if (data.error) throw new Error(`Meta API: ${data.error.message}`);
+    return data as T;
+  }
+
+  // ─── Date params helper ───────────────────────────────────────────────────
+
+  private dateParams(dateRange: string): Record<string, string> {
+    if (dateRange.startsWith('CUSTOM:')) {
+      const [, since, until] = dateRange.split(':');
+      return { time_range: JSON.stringify({ since, until }) };
+    }
+    const MAP: Record<string, string> = {
+      LAST_7_DAYS: 'last_7d', LAST_14_DAYS: 'last_14d', LAST_30_DAYS: 'last_30d',
+      THIS_MONTH: 'this_month', LAST_MONTH: 'last_month',
+    };
+    return { date_preset: MAP[dateRange] ?? 'last_7d' };
+  }
+
+  // ─── Action extractor ─────────────────────────────────────────────────────
+
+  private action(actions: any[] | undefined, type: string): number {
+    return Number(actions?.find(a => a.action_type === type)?.value ?? 0);
+  }
+
+  private allActions(actions: any[] | undefined) {
+    if (!actions?.length) return [];
+    const LABELS: Record<string, string> = {
+      'link_click': 'Cliques no link',
+      'post_reaction': 'Reações',
+      'post_engagement': 'Engajamento',
+      'page_engagement': 'Engajamento na página',
+      'omni_landing_page_view': 'Visualizações de página',
+      'onsite_conversion.total_messaging_connection': 'Conexões de mensagem',
+      'onsite_conversion.messaging_conversation_started_7d': 'Conversas iniciadas',
+      'onsite_conversion.messaging_first_reply': 'Primeiras respostas',
+      'video_view': 'Visualizações de vídeo',
+      'post': 'Compartilhamentos',
+    };
+    return actions
+      .filter(a => LABELS[a.action_type] && Number(a.value) > 0)
+      .map(a => ({ tipo: LABELS[a.action_type] ?? a.action_type, valor: Number(a.value) }));
+  }
+
+  // ─── Account ──────────────────────────────────────────────────────────────
+
+  async listAdAccounts() {
+    const data = await this.get<any>('/me/adaccounts', {
+      fields: 'id,name,account_status,currency,business',
+      limit: '100',
+    });
+    return (data.data ?? []).map((a: any) => ({
+      id: a.id,
+      nome: a.name,
+      moeda: a.currency ?? 'BRL',
+      status: a.account_status,
+      negocio: a.business?.name ?? null,
+    }));
+  }
+
+  async getAccountOverview(accountId: string, dateRange = 'LAST_7_DAYS') {
+    const d = this.dateParams(dateRange);
+    const data = await this.get<any>(`/${accountId}/insights`, {
+      fields: 'impressions,clicks,spend,ctr,cpc,reach,frequency,actions',
+      ...d,
+    });
+
+    if (!data.data?.length) return { periodo: dateRange, mensagem: 'Sem dados no período.' };
+    const r = data.data[0];
+    const spend = Number(r.spend ?? 0);
+    const clicks = Number(r.clicks ?? 0);
+    const impr = Number(r.impressions ?? 0);
+    const mensagens = this.action(r.actions, 'onsite_conversion.total_messaging_connection');
+    return {
+      periodo: dateRange,
+      impressoes: impr,
+      cliques: clicks,
+      custo: `R$ ${spend.toFixed(2)}`,
+      ctr: `${Number(r.ctr ?? 0).toFixed(2)}%`,
+      cpc_medio: `R$ ${Number(r.cpc ?? 0).toFixed(2)}`,
+      alcance: Number(r.reach ?? 0),
+      frequencia: Number(r.frequency ?? 0).toFixed(2),
+      mensagens,
+      conversoes: mensagens,
+      custo_por_conversao: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
+      taxa_conversao: clicks > 0 ? `${((mensagens / clicks) * 100).toFixed(2)}%` : '0.00%',
+    };
+  }
+
+  // ─── Campaigns ────────────────────────────────────────────────────────────
+
+  async listCampaigns(accountId: string, dateRange = 'LAST_7_DAYS') {
+    const d = this.dateParams(dateRange);
+
+    const [campsData, insightsData] = await Promise.all([
+      this.get<any>(`/${accountId}/campaigns`, {
+        fields: 'id,name,status,objective,daily_budget,lifetime_budget',
+        limit: '100',
+      }),
+      this.get<any>(`/${accountId}/insights`, {
+        fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,reach,actions',
+        level: 'campaign', limit: '200', ...d,
+      }),
+    ]);
+
+    const iMap = new Map<string, any>();
+    for (const ins of insightsData.data ?? []) iMap.set(ins.campaign_id, ins);
+
+    const OBJ: Record<string, string> = {
+      OUTCOME_ENGAGEMENT: 'Engajamento', OUTCOME_AWARENESS: 'Reconhecimento',
+      OUTCOME_TRAFFIC: 'Tráfego', OUTCOME_LEADS: 'Leads',
+      OUTCOME_SALES: 'Vendas', OUTCOME_APP_PROMOTION: 'App',
+    };
+
+    return (campsData.data ?? []).map((c: any) => {
+      const ins = iMap.get(c.id);
+      const spend = Number(ins?.spend ?? 0);
+      const clicks = Number(ins?.clicks ?? 0);
+      const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
+      return {
+        id: c.id,
+        nome: c.name,
+        status: c.status,
+        objetivo: OBJ[c.objective] ?? c.objective ?? 'N/A',
+        orcamento_diario: c.daily_budget ? `R$ ${(Number(c.daily_budget) / 100).toFixed(2)}` : null,
+        orcamento_lifetime: c.lifetime_budget ? `R$ ${(Number(c.lifetime_budget) / 100).toFixed(2)}` : null,
+        impressoes: Number(ins?.impressions ?? 0),
+        cliques: clicks,
+        custo: `R$ ${spend.toFixed(2)}`,
+        ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
+        cpc_medio: `R$ ${Number(ins?.cpc ?? 0).toFixed(2)}`,
+        alcance: Number(ins?.reach ?? 0),
+        mensagens,
+        conversoes: mensagens,
+        custo_por_conversao: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
+        taxa_conversao: clicks > 0 ? `${((mensagens / clicks) * 100).toFixed(2)}%` : '0.00%',
+      };
+    });
+  }
+
+  // ─── Ad Sets (equivalent of keywords for Meta) ────────────────────────────
+
+  async listAdSets(accountId: string, campaignId: string, dateRange = 'LAST_7_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
+
+    const [adSetsData, insightsData] = await Promise.all([
+      this.get<any>(`/${campaignId}/adsets`, {
+        fields: 'id,name,status,daily_budget,lifetime_budget,targeting,optimization_goal',
+        limit: '100',
+      }),
+      this.get<any>(`/${accountId}/insights`, {
+        fields: 'adset_id,impressions,clicks,spend,ctr,cpc,reach,actions',
+        level: 'adset', filtering: filter, limit: '200', ...d,
+      }),
+    ]);
+
+    const iMap = new Map<string, any>();
+    for (const ins of insightsData.data ?? []) iMap.set(ins.adset_id, ins);
+
+    return (adSetsData.data ?? []).map((a: any) => {
+      const ins = iMap.get(a.id);
+      const t = a.targeting ?? {};
+      const spend = Number(ins?.spend ?? 0);
+      const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
+      return {
+        id: a.id,
+        nome: a.name,
+        status: a.status,
+        orcamento_diario: a.daily_budget ? `R$ ${(Number(a.daily_budget) / 100).toFixed(2)}` : null,
+        segmentacao: {
+          idade: t.age_min && t.age_max ? `${t.age_min}–${t.age_max} anos` : null,
+          generos: (t.genders ?? []).map((g: number) => g === 1 ? 'Masculino' : 'Feminino'),
+          interesses: (t.flexible_spec ?? []).flatMap((s: any) => (s.interests ?? []).map((i: any) => i.name)),
+          publicos_custom: (t.custom_audiences ?? []).map((a: any) => a.name),
+          exclusoes: (t.excluded_custom_audiences ?? []).map((a: any) => a.name),
+          localizacoes: t.geo_locations?.countries ?? t.geo_locations?.regions?.map((r: any) => r.name) ?? [],
+          plataformas: t.publisher_platforms ?? [],
+        },
+        impressoes: Number(ins?.impressions ?? 0),
+        cliques: Number(ins?.clicks ?? 0),
+        custo: `R$ ${spend.toFixed(2)}`,
+        ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
+        alcance: Number(ins?.reach ?? 0),
+        mensagens,
+        acoes: this.allActions(ins?.actions),
+      };
+    });
+  }
+
+  // ─── Demographics ─────────────────────────────────────────────────────────
+
+  async getDemographics(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
+    const base = { level: 'campaign', filtering: filter, ...d };
+
+    const [ageData, genderData] = await Promise.all([
+      this.get<any>(`/${accountId}/insights`, {
+        fields: 'impressions,clicks,spend,actions', breakdowns: 'age', ...base,
+      }),
+      this.get<any>(`/${accountId}/insights`, {
+        fields: 'impressions,clicks,spend,actions', breakdowns: 'gender', ...base,
+      }),
+    ]);
+
+    const GENDER: Record<string, string> = { male: 'Masculino', female: 'Feminino', unknown: 'Desconhecido' };
+
+    const toItem = (r: any, labelKey: string, labelMap?: Record<string, string>) => ({
+      label: (labelMap ? labelMap[r[labelKey]] : null) ?? r[labelKey] ?? 'N/A',
+      impressoes: Number(r.impressions ?? 0),
+      cliques: Number(r.clicks ?? 0),
+      custo: Number(r.spend ?? 0).toFixed(2),
+      conversoes: this.action(r.actions, 'onsite_conversion.total_messaging_connection'),
+    });
+
+    return {
+      idade: (ageData.data ?? [])
+        .filter((r: any) => Number(r.impressions) > 0)
+        .sort((a: any, b: any) => Number(b.impressions) - Number(a.impressions))
+        .map((r: any) => toItem(r, 'age')),
+      genero: (genderData.data ?? [])
+        .filter((r: any) => Number(r.impressions) > 0)
+        .map((r: any) => toItem(r, 'gender', GENDER)),
+      renda: [],
+    };
+  }
+
+  // ─── Day of week ──────────────────────────────────────────────────────────
+
+  async getDayOfWeek(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
+
+    const data = await this.get<any>(`/${accountId}/insights`, {
+      fields: 'impressions,clicks,spend,actions',
+      level: 'campaign', filtering: filter, time_increment: '1', ...d,
+    });
+
+    const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    const ORDER = [1, 2, 3, 4, 5, 6, 0];
+    const byDay: Record<number, any> = {};
+
+    for (const r of data.data ?? []) {
+      const date = new Date(`${r.date_start}T12:00:00Z`);
+      const idx = date.getUTCDay();
+      if (!byDay[idx]) byDay[idx] = { impressoes: 0, cliques: 0, custo: 0, conversoes: 0 };
+      byDay[idx].impressoes += Number(r.impressions ?? 0);
+      byDay[idx].cliques += Number(r.clicks ?? 0);
+      byDay[idx].custo += Number(r.spend ?? 0);
+      byDay[idx].conversoes += this.action(r.actions, 'onsite_conversion.total_messaging_connection');
+    }
+
+    return ORDER.map(idx => ({
+      dia: DAY_LABELS[idx],
+      impressoes: byDay[idx]?.impressoes ?? 0,
+      cliques: byDay[idx]?.cliques ?? 0,
+      custo: `R$ ${(byDay[idx]?.custo ?? 0).toFixed(2)}`,
+      conversoes: byDay[idx]?.conversoes ?? 0,
+    }));
+  }
+
+  // ─── Devices ──────────────────────────────────────────────────────────────
+
+  async getDevices(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
+
+    const data = await this.get<any>(`/${accountId}/insights`, {
+      fields: 'impressions,clicks,spend,reach,actions',
+      breakdowns: 'device_platform', level: 'campaign', filtering: filter, ...d,
+    });
+
+    const DEVICES: Record<string, string> = {
+      mobile: 'Mobile', desktop: 'Desktop', tablet: 'Tablet',
+      connected_tv: 'TV Conectada', unknown: 'Outros',
+    };
+
+    return (data.data ?? [])
+      .map((r: any) => ({
+        dispositivo: DEVICES[r.device_platform] ?? r.device_platform,
+        impressoes: Number(r.impressions ?? 0),
+        cliques: Number(r.clicks ?? 0),
+        custo: `R$ ${Number(r.spend ?? 0).toFixed(2)}`,
+        conversoes: this.action(r.actions, 'onsite_conversion.total_messaging_connection'),
+        ctr: Number(r.impressions) > 0
+          ? `${((Number(r.clicks) / Number(r.impressions)) * 100).toFixed(2)}%` : '0.00%',
+      }))
+      .sort((a: any, b: any) => b.impressoes - a.impressoes);
+  }
+
+  // ─── Placements (publisher platforms) ────────────────────────────────────
+
+  async getPlacements(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
+
+    const data = await this.get<any>(`/${accountId}/insights`, {
+      fields: 'impressions,clicks,spend,reach,actions',
+      breakdowns: 'publisher_platform', level: 'campaign', filtering: filter, ...d,
+    });
+
+    const PLATFORMS: Record<string, string> = {
+      facebook: 'Facebook', instagram: 'Instagram',
+      audience_network: 'Audience Network', messenger: 'Messenger', whatsapp: 'WhatsApp',
+    };
+
+    return (data.data ?? [])
+      .map((r: any) => ({
+        plataforma: PLATFORMS[r.publisher_platform] ?? r.publisher_platform,
+        impressoes: Number(r.impressions ?? 0),
+        cliques: Number(r.clicks ?? 0),
+        custo: `R$ ${Number(r.spend ?? 0).toFixed(2)}`,
+        alcance: Number(r.reach ?? 0),
+        conversoes: this.action(r.actions, 'onsite_conversion.total_messaging_connection'),
+        ctr: Number(r.impressions) > 0
+          ? `${((Number(r.clicks) / Number(r.impressions)) * 100).toFixed(2)}%` : '0.00%',
+      }))
+      .sort((a: any, b: any) => b.impressoes - a.impressoes);
+  }
+}
