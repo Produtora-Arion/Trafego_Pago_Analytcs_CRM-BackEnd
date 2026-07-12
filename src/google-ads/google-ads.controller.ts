@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { GoogleAdsService } from './google-ads.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 
@@ -61,6 +61,32 @@ export class GoogleAdsController {
     @Param('campaignId') campaignId: string,
   ) {
     return this.googleAds.getNegativeKeywords(customerId, campaignId);
+  }
+
+  @Delete(':customerId/negatives')
+  removeNegatives(
+    @Param('customerId') customerId: string,
+    @Body() body: { items: { nivel: 'campanha' | 'grupo'; resource_name: string }[] },
+  ) {
+    return this.googleAds.removeNegativeKeywords(customerId, body.items);
+  }
+
+  @Post(':customerId/campaigns/:campaignId/negatives')
+  addNegative(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Body() body: { keyword: string; matchType: 'EXACT' | 'PHRASE' | 'BROAD'; nivel: 'campanha' | 'grupo'; adGroupId?: string },
+  ) {
+    return this.googleAds.addNegativeKeyword(customerId, campaignId, body.keyword, body.matchType, body.nivel, body.adGroupId);
+  }
+
+  @Post(':customerId/ad-groups/:adGroupId/keywords')
+  addKeyword(
+    @Param('customerId') customerId: string,
+    @Param('adGroupId') adGroupId: string,
+    @Body() body: { keyword: string; matchType: 'EXACT' | 'PHRASE' | 'BROAD' },
+  ) {
+    return this.googleAds.addPositiveKeyword(customerId, adGroupId, body.keyword, body.matchType);
   }
 
   @Get(':customerId/campaigns/:campaignId/demographics')

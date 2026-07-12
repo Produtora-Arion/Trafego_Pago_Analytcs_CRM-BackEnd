@@ -25,6 +25,37 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  private decodeMatchType(v: unknown): string {
+    // google-ads-api v23 enum: 2=EXACT, 3=PHRASE, 4=BROAD
+    if (typeof v === 'string') {
+      const u = v.toUpperCase();
+      if (u === 'BROAD') return 'BROAD';
+      if (u === 'PHRASE') return 'PHRASE';
+      if (u === 'EXACT') return 'EXACT';
+    }
+    const n = Number(v);
+    if (n === 4) return 'BROAD';
+    if (n === 3) return 'PHRASE';
+    if (n === 2) return 'EXACT';
+    return 'BROAD';
+  }
+
+  private decodeApproval(v: unknown): string {
+    const map: Record<number, string> = { 2: 'APPROVED', 3: 'APPROVED_LIMITED', 4: 'DISAPPROVED', 5: 'UNDER_REVIEW' };
+    return map[Number(v)] ?? 'UNKNOWN';
+  }
+
+  private decodeServing(v: unknown): string {
+    const map: Record<number, string> = { 2: 'ELIGIBLE', 3: 'RARELY_SERVED' };
+    return map[Number(v)] ?? 'UNKNOWN';
+  }
+
+  private decodeQuality(v: unknown): string | null {
+    if (v == null) return null;
+    const map: Record<number, string> = { 2: 'ABOVE_AVERAGE', 3: 'AVERAGE', 4: 'BELOW_AVERAGE' };
+    return map[Number(v)] ?? null;
+  }
+
   private buildDateFilter(dateRange: string): string {
     if (dateRange.startsWith('CUSTOM:')) {
       const parts = dateRange.split(':');
@@ -259,42 +290,79 @@ export class GoogleAdsService implements OnModuleInit {
     const customer = this.getCustomer(customerId);
     const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : '';
 
-    const rows = await customer.query(`
-      SELECT
-        ad_group_criterion.keyword.text,
-        ad_group_criterion.keyword.match_type,
-        ad_group_criterion.status,
-        campaign.name,
-        ad_group.name,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions,
-        ad_group_criterion.quality_info.quality_score
-      FROM keyword_view
-      WHERE ad_group_criterion.status != 'REMOVED'
-        ${campaignFilter}
-        AND segments.date ${this.buildDateFilter(dateRange)}
-      ORDER BY metrics.cost_micros DESC
-      LIMIT 50
-    `);
+    // Busca todas as palavras-chave (sem filtro de data para não perder kws sem atividade)
+    const [kwRows, metricRows] = await Promise.all([
+      customer.query(`
+        SELECT
+          ad_group_criterion.keyword.text,
+          ad_group_criterion.keyword.match_type,
+          ad_group_criterion.status,
+          ad_group_criterion.approval_status,
+          ad_group_criterion.system_serving_status,
+          ad_group_criterion.quality_info.quality_score,
+          ad_group_criterion.quality_info.search_predicted_ctr,
+          ad_group_criterion.quality_info.creative_quality_score,
+          ad_group_criterion.quality_info.post_click_quality_score,
+          campaign.id,
+          campaign.name,
+          ad_group.name
+        FROM ad_group_criterion
+        WHERE ad_group_criterion.type = 'KEYWORD'
+          AND ad_group_criterion.negative = false
+          AND ad_group_criterion.status != 'REMOVED'
+          ${campaignFilter}
+        ORDER BY ad_group_criterion.keyword.text ASC
+        LIMIT 200
+      `),
+      customer.query(`
+        SELECT
+          ad_group_criterion.keyword.text,
+          campaign.id,
+          ad_group.name,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.ctr,
+          metrics.average_cpc,
+          metrics.conversions
+        FROM keyword_view
+        WHERE ad_group_criterion.status != 'REMOVED'
+          ${campaignFilter}
+          AND segments.date ${this.buildDateFilter(dateRange)}
+        LIMIT 200
+      `),
+    ]);
 
-    return rows.map((r) => ({
-      palavra_chave: r.ad_group_criterion.keyword.text,
-      tipo_correspondencia: r.ad_group_criterion.keyword.match_type,
-      campanha: r.campaign.name,
-      grupo_anuncio: r.ad_group.name,
-      status: r.ad_group_criterion.status,
-      impressoes: Number(r.metrics.impressions),
-      cliques: Number(r.metrics.clicks),
-      custo: `R$ ${(Number(r.metrics.cost_micros) / 1_000_000).toFixed(2)}`,
-      ctr: `${(Number(r.metrics.ctr) * 100).toFixed(2)}%`,
-      cpc_medio: `R$ ${(Number(r.metrics.average_cpc) / 1_000_000).toFixed(2)}`,
-      conversoes: Number(r.metrics.conversions),
-      indice_qualidade: r.ad_group_criterion.quality_info?.quality_score ?? 'N/A',
-    }));
+    // Cria mapa de métricas por "campanha|grupo|keyword"
+    const metricsMap = new Map<string, (typeof metricRows)[0]>();
+    for (const r of metricRows) {
+      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}`;
+      metricsMap.set(key, r);
+    }
+
+    return kwRows.map((r) => {
+      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}`;
+      const m = metricsMap.get(key);
+      return {
+        palavra_chave: r.ad_group_criterion.keyword.text,
+        tipo_correspondencia: this.decodeMatchType(r.ad_group_criterion.keyword?.match_type),
+        campanha: r.campaign.name,
+        grupo_anuncio: r.ad_group.name,
+        status: r.ad_group_criterion.status,
+        impressoes: m ? Number(m.metrics.impressions) : 0,
+        cliques: m ? Number(m.metrics.clicks) : 0,
+        custo: `R$ ${m ? (Number(m.metrics.cost_micros) / 1_000_000).toFixed(2) : '0.00'}`,
+        ctr: m ? `${(isNaN(Number(m.metrics.ctr)) ? 0 : Number(m.metrics.ctr) * 100).toFixed(2)}%` : '0.00%',
+        cpc_medio: m ? `R$ ${(isNaN(Number(m.metrics.average_cpc)) ? 0 : Number(m.metrics.average_cpc) / 1_000_000).toFixed(2)}` : 'R$ 0.00',
+        conversoes: m ? Number(m.metrics.conversions) : 0,
+        indice_qualidade: r.ad_group_criterion.quality_info?.quality_score ?? 'N/A',
+        status_aprovacao: this.decodeApproval(r.ad_group_criterion.approval_status),
+        status_veiculacao: this.decodeServing(r.ad_group_criterion.system_serving_status),
+        ctr_previsto: this.decodeQuality(r.ad_group_criterion.quality_info?.search_predicted_ctr),
+        relevancia_anuncio: this.decodeQuality(r.ad_group_criterion.quality_info?.creative_quality_score),
+        qualidade_pagina: this.decodeQuality(r.ad_group_criterion.quality_info?.post_click_quality_score),
+      };
+    });
   }
 
   async getNegativeKeywords(customerId: string, campaignId: string) {
@@ -303,6 +371,7 @@ export class GoogleAdsService implements OnModuleInit {
     const [campNegs, groupNegs] = await Promise.all([
       customer.query(`
         SELECT
+          campaign_criterion.resource_name,
           campaign_criterion.keyword.text,
           campaign_criterion.keyword.match_type
         FROM campaign_criterion
@@ -312,6 +381,7 @@ export class GoogleAdsService implements OnModuleInit {
       `),
       customer.query(`
         SELECT
+          ad_group_criterion.resource_name,
           ad_group_criterion.keyword.text,
           ad_group_criterion.keyword.match_type,
           ad_group.name
@@ -322,17 +392,87 @@ export class GoogleAdsService implements OnModuleInit {
       `),
     ]);
 
+    console.log(`[getNegativeKeywords] customerId=${customerId} campaignId=${campaignId} campNegs=${campNegs.length} groupNegs=${groupNegs.length}`);
+    if (groupNegs.length > 0) {
+      const sample = groupNegs[0];
+      console.log('[getNegativeKeywords] sample row keys:', Object.keys(sample));
+      console.log('[getNegativeKeywords] sample ad_group_criterion:', JSON.stringify(sample.ad_group_criterion));
+    }
+
     return {
       nivel_campanha: campNegs.map((r) => ({
+        resource_name: r.campaign_criterion.resource_name ?? '',
         palavra: r.campaign_criterion.keyword?.text ?? '',
-        tipo: r.campaign_criterion.keyword?.match_type ?? '',
+        tipo: this.decodeMatchType(r.campaign_criterion.keyword?.match_type),
       })),
       nivel_grupo: groupNegs.map((r) => ({
+        resource_name: r.ad_group_criterion.resource_name ?? '',
         palavra: r.ad_group_criterion.keyword?.text ?? '',
-        tipo: r.ad_group_criterion.keyword?.match_type ?? '',
+        tipo: this.decodeMatchType(r.ad_group_criterion.keyword?.match_type),
         grupo: r.ad_group?.name ?? '',
       })),
     };
+  }
+
+  async removeNegativeKeywords(
+    customerId: string,
+    resourceNames: { nivel: 'campanha' | 'grupo'; resource_name: string }[],
+  ) {
+    const customer = this.getCustomer(customerId);
+
+    const campNames = resourceNames.filter(r => r.nivel === 'campanha').map(r => r.resource_name);
+    const groupNames = resourceNames.filter(r => r.nivel === 'grupo').map(r => r.resource_name);
+
+    await Promise.all([
+      campNames.length ? customer.campaignCriteria.remove(campNames) : Promise.resolve(),
+      groupNames.length ? customer.adGroupCriteria.remove(groupNames) : Promise.resolve(),
+    ]);
+
+    return { removidas: resourceNames.length };
+  }
+
+  async addNegativeKeyword(
+    customerId: string,
+    campaignId: string,
+    keyword: string,
+    matchType: 'EXACT' | 'PHRASE' | 'BROAD',
+    nivel: 'campanha' | 'grupo',
+    adGroupId?: string,
+  ) {
+    const customer = this.getCustomer(customerId);
+    const cleanCustomer = customerId.replace(/-/g, '');
+
+    if (nivel === 'campanha') {
+      await customer.campaignCriteria.create([{
+        campaign: `customers/${cleanCustomer}/campaigns/${campaignId}`,
+        negative: true,
+        keyword: { text: keyword, match_type: matchType },
+      } as any]);
+    } else {
+      if (!adGroupId) throw new Error('adGroupId obrigatório para nível grupo');
+      await customer.adGroupCriteria.create([{
+        ad_group: `customers/${cleanCustomer}/adGroups/${adGroupId}`,
+        negative: true,
+        keyword: { text: keyword, match_type: matchType },
+      } as any]);
+    }
+
+    return { adicionada: keyword, nivel, matchType };
+  }
+
+  async addPositiveKeyword(
+    customerId: string,
+    adGroupId: string,
+    keyword: string,
+    matchType: 'EXACT' | 'PHRASE' | 'BROAD',
+  ) {
+    const customer = this.getCustomer(customerId);
+    const cleanCustomer = customerId.replace(/-/g, '');
+    await customer.adGroupCriteria.create([{
+      ad_group: `customers/${cleanCustomer}/adGroups/${adGroupId}`,
+      keyword: { text: keyword, match_type: matchType },
+    } as any]);
+    return { adicionada: keyword, matchType, adGroupId };
   }
 
   async getDemographics(
@@ -388,7 +528,7 @@ export class GoogleAdsService implements OnModuleInit {
       10: 'Masculino', 11: 'Feminino', 20: 'Desconhecido',
     };
     const INCOME: Record<number, string> = {
-      510001: 'Abaixo de 50%', 510002: '50–60%', 510003: '60–70%',
+      510000: 'Desconhecido', 510001: 'Abaixo de 50%', 510002: '50–60%', 510003: '60–70%',
       510004: '70–80%', 510005: '80–90%', 510006: 'Acima de 90%', 510999: 'Desconhecido',
     };
 
@@ -515,5 +655,71 @@ export class GoogleAdsService implements OnModuleInit {
         ctr: d.impressoes > 0 ? `${((d.cliques / d.impressoes) * 100).toFixed(2)}%` : '0.00%',
       }))
       .sort((a, b) => b.impressoes - a.impressoes);
+  }
+
+  async uploadOfflineConversion(
+    customerId: string,
+    gclid: string,
+    conversionActionId: string,
+    convertedAt: Date,
+    value: number,
+  ): Promise<{ success: boolean; detail?: string }> {
+    const cleanId = customerId.replace(/-/g, '');
+
+    // Obter access token via refresh token
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     this.config.getOrThrow('GOOGLE_CLIENT_ID'),
+        client_secret: this.config.getOrThrow('GOOGLE_CLIENT_SECRET'),
+        refresh_token: this.config.getOrThrow('GOOGLE_REFRESH_TOKEN'),
+        grant_type:    'refresh_token',
+      }),
+    });
+    const { access_token } = await tokenRes.json() as any;
+
+    // Formato exigido: "yyyy-MM-dd HH:mm:ss+00:00"
+    const dt = convertedAt
+      .toISOString()
+      .replace('T', ' ')
+      .replace(/\.\d+Z$/, '+00:00');
+
+    const body = {
+      conversions: [{
+        gclid,
+        conversionAction: `customers/${cleanId}/conversionActions/${conversionActionId}`,
+        conversionDateTime: dt,
+        conversionValue: value,
+        currencyCode: 'BRL',
+      }],
+      partialFailure: true,
+    };
+
+    const res = await fetch(
+      `https://googleads.googleapis.com/v19/customers/${cleanId}:uploadClickConversions`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization:       `Bearer ${access_token}`,
+          'developer-token':   this.config.getOrThrow('GOOGLE_DEVELOPER_TOKEN'),
+          'login-customer-id': this.config.getOrThrow('GOOGLE_MCC_CUSTOMER_ID'),
+          'Content-Type':      'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    const result = await res.json() as any;
+    if (!res.ok) {
+      console.error('[uploadConversion] Erro:', JSON.stringify(result));
+      return { success: false, detail: JSON.stringify(result) };
+    }
+    if (result.partialFailureError) {
+      console.warn('[uploadConversion] Falha parcial:', JSON.stringify(result.partialFailureError));
+      return { success: false, detail: JSON.stringify(result.partialFailureError) };
+    }
+    console.log('[uploadConversion] Sucesso:', JSON.stringify(result));
+    return { success: true };
   }
 }

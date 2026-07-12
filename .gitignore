@@ -4,6 +4,7 @@ dist/
 .env.*
 credentials.json
 *.log
+*.db
 npm-debug.log*
 .vscode/
 .idea/
