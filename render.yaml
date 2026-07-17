@@ -1,0 +1,60 @@
+# Blueprint do Render — cria o serviço da API automaticamente.
+# Os valores marcados com "sync: false" são segredos: você os define no
+# painel do Render (nunca ficam no git).
+services:
+  - type: web
+    name: trafego-pago-crm-backend
+    runtime: node
+    region: oregon # mesma região do Supabase (us-west-2) — menor latência ao banco
+    plan: starter # plano pago, sempre ligado (sem hibernação)
+    branch: Main
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    startCommand: node dist/src/main.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: SERVER_MODE
+        value: http
+      - key: NODE_VERSION
+        value: "20"
+      # ── Banco (Supabase) ─────────────────────────────────────────
+      - key: DATABASE_URL
+        sync: false
+      # ── Supabase Auth ────────────────────────────────────────────
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      # ── API interna (uso servidor-a-servidor) ───────────────────
+      - key: API_KEY
+        sync: false
+      # ── CORS: URL do frontend na Vercel ─────────────────────────
+      - key: FRONTEND_URL
+        sync: false
+      # ── Google Ads ───────────────────────────────────────────────
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_DEVELOPER_TOKEN
+        sync: false
+      - key: GOOGLE_MCC_CUSTOMER_ID
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
+      # ── Meta / WhatsApp ──────────────────────────────────────────
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      # ── Conversão offline Google Ads ─────────────────────────────
+      - key: GA_CONVERSION_CUSTOMER_ID
+        sync: false
+      - key: GA_CONVERSION_ACTION_ID
+        sync: false

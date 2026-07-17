@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+credentials.json
+*.log
+*.db
+npm-debug.log*
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
