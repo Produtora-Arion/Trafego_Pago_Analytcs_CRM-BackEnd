@@ -11,6 +11,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { CrmStagesModule } from './crm-stages/crm-stages.module';
 import { WebhookConfigModule } from './webhook-config/webhook-config.module';
 import { AuthModule } from './auth/auth.module';
+import { HealthController } from './health.controller';
 import { Lead } from './leads/lead.entity';
 import { CrmStage } from './crm-stages/crm-stage.entity';
 import { WebhookToken } from './webhook-config/webhook-token.entity';
@@ -41,6 +42,7 @@ import { WebhookToken } from './webhook-config/webhook-token.entity';
     WebhookConfigModule,
     AuthModule,
   ],
+  controllers: [HealthController],
   providers: [
     // Aplica o rate limit a todas as rotas HTTP
     { provide: APP_GUARD, useClass: ThrottlerGuard },
