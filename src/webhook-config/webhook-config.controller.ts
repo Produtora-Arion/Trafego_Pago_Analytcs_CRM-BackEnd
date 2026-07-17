@@ -1,9 +1,9 @@
 import { Controller, Get, Post, Param, Query, Body, UseGuards } from '@nestjs/common';
 import { WebhookConfigService } from './webhook-config.service';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 
 @Controller('webhook-config')
-@UseGuards(ApiKeyGuard)
+@UseGuards(SupabaseAuthGuard)
 export class WebhookConfigController {
   constructor(private readonly service: WebhookConfigService) {}
 

@@ -43,8 +43,13 @@ export class CrmStagesService {
     return this.stagesRepo.save(stage);
   }
 
-  async update(id: number, data: { label?: string; color?: string; triggersConversion?: boolean }): Promise<CrmStage> {
-    const stage = await this.stagesRepo.findOne({ where: { id } });
+  async update(
+    id: number,
+    data: { label?: string; color?: string; triggersConversion?: boolean },
+    tenantId: string | null,
+  ): Promise<CrmStage> {
+    const where = tenantId ? { id, customerId: tenantId } : { id };
+    const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
     const oldLabel = stage.label;
@@ -72,8 +77,9 @@ export class CrmStagesService {
     );
   }
 
-  async delete(id: number): Promise<void> {
-    const stage = await this.stagesRepo.findOne({ where: { id } });
+  async delete(id: number, tenantId: string | null): Promise<void> {
+    const where = tenantId ? { id, customerId: tenantId } : { id };
+    const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
     // Move leads desta etapa para a primeira etapa restante

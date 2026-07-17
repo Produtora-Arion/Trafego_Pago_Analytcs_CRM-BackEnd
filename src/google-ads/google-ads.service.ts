@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleAdsApi } from 'google-ads-api';
 
@@ -16,8 +16,28 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  /**
+   * Garante que um ID contém apenas dígitos antes de ser interpolado em GAQL
+   * ou em resource names. Bloqueia injeção (ex: "0 OR 1=1").
+   */
+  private numId(value: string, field = 'id'): string {
+    const clean = String(value ?? '').replace(/-/g, '');
+    if (!/^\d+$/.test(clean)) {
+      throw new BadRequestException(`Parâmetro ${field} inválido`);
+    }
+    return clean;
+  }
+
+  /** Valida datas no formato YYYY-MM-DD antes de interpolar no filtro GAQL */
+  private safeDate(value: string): string {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException('Data inválida');
+    }
+    return value;
+  }
+
   private getCustomer(customerId: string) {
-    const cleanId = customerId.replace(/-/g, '');
+    const cleanId = this.numId(customerId, 'customerId');
     return this.client.Customer({
       customer_id: cleanId,
       refresh_token: this.config.getOrThrow('GOOGLE_REFRESH_TOKEN'),
@@ -59,7 +79,12 @@ export class GoogleAdsService implements OnModuleInit {
   private buildDateFilter(dateRange: string): string {
     if (dateRange.startsWith('CUSTOM:')) {
       const parts = dateRange.split(':');
-      return `BETWEEN '${parts[1]}' AND '${parts[2]}'`;
+      return `BETWEEN '${this.safeDate(parts[1])}' AND '${this.safeDate(parts[2])}'`;
+    }
+    // Períodos predefinidos do Google Ads: letras, dígitos e underscore
+    // (ex: LAST_7_DAYS, LAST_30_DAYS, THIS_MONTH). Bloqueia qualquer injeção.
+    if (!/^[A-Z0-9_]+$/.test(dateRange)) {
+      throw new BadRequestException('Período inválido');
     }
     return `DURING ${dateRange}`;
   }
@@ -202,7 +227,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.search_budget_lost_impression_share,
         metrics.search_rank_lost_impression_share
       FROM campaign
-      WHERE campaign.id = ${campaignId}
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
         AND segments.date ${this.buildDateFilter(dateRange)}
     `);
 
@@ -263,7 +288,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.ctr,
         metrics.conversions
       FROM ad_group
-      WHERE campaign.id = ${campaignId}
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
         AND ad_group.status != 'REMOVED'
         AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY metrics.cost_micros DESC
@@ -288,7 +313,7 @@ export class GoogleAdsService implements OnModuleInit {
     dateRange = 'LAST_7_DAYS',
   ) {
     const customer = this.getCustomer(customerId);
-    const campaignFilter = campaignId ? `AND campaign.id = ${campaignId}` : '';
+    const campaignFilter = campaignId ? `AND campaign.id = ${this.numId(campaignId, 'campaignId')}` : '';
 
     // Busca todas as palavras-chave (sem filtro de data para não perder kws sem atividade)
     const [kwRows, metricRows] = await Promise.all([
@@ -375,7 +400,7 @@ export class GoogleAdsService implements OnModuleInit {
           campaign_criterion.keyword.text,
           campaign_criterion.keyword.match_type
         FROM campaign_criterion
-        WHERE campaign.id = ${campaignId}
+        WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
           AND campaign_criterion.negative = true
           AND campaign_criterion.type = 'KEYWORD'
       `),
@@ -386,7 +411,7 @@ export class GoogleAdsService implements OnModuleInit {
           ad_group_criterion.keyword.match_type,
           ad_group.name
         FROM ad_group_criterion
-        WHERE campaign.id = ${campaignId}
+        WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
           AND ad_group_criterion.negative = true
           AND ad_group_criterion.type = 'KEYWORD'
       `),
@@ -419,6 +444,15 @@ export class GoogleAdsService implements OnModuleInit {
     resourceNames: { nivel: 'campanha' | 'grupo'; resource_name: string }[],
   ) {
     const customer = this.getCustomer(customerId);
+    const cleanCustomer = this.numId(customerId, 'customerId');
+
+    // Recusa resource_names que não pertençam a esta conta (defesa cross-tenant)
+    const belongsToCustomer = (rn: string) => rn.startsWith(`customers/${cleanCustomer}/`);
+    for (const r of resourceNames) {
+      if (!belongsToCustomer(r.resource_name)) {
+        throw new BadRequestException('resource_name não pertence a esta conta');
+      }
+    }
 
     const campNames = resourceNames.filter(r => r.nivel === 'campanha').map(r => r.resource_name);
     const groupNames = resourceNames.filter(r => r.nivel === 'grupo').map(r => r.resource_name);
@@ -440,18 +474,18 @@ export class GoogleAdsService implements OnModuleInit {
     adGroupId?: string,
   ) {
     const customer = this.getCustomer(customerId);
-    const cleanCustomer = customerId.replace(/-/g, '');
+    const cleanCustomer = this.numId(customerId, 'customerId');
 
     if (nivel === 'campanha') {
       await customer.campaignCriteria.create([{
-        campaign: `customers/${cleanCustomer}/campaigns/${campaignId}`,
+        campaign: `customers/${cleanCustomer}/campaigns/${this.numId(campaignId, 'campaignId')}`,
         negative: true,
         keyword: { text: keyword, match_type: matchType },
       } as any]);
     } else {
       if (!adGroupId) throw new Error('adGroupId obrigatório para nível grupo');
       await customer.adGroupCriteria.create([{
-        ad_group: `customers/${cleanCustomer}/adGroups/${adGroupId}`,
+        ad_group: `customers/${cleanCustomer}/adGroups/${this.numId(adGroupId, 'adGroupId')}`,
         negative: true,
         keyword: { text: keyword, match_type: matchType },
       } as any]);
@@ -467,9 +501,9 @@ export class GoogleAdsService implements OnModuleInit {
     matchType: 'EXACT' | 'PHRASE' | 'BROAD',
   ) {
     const customer = this.getCustomer(customerId);
-    const cleanCustomer = customerId.replace(/-/g, '');
+    const cleanCustomer = this.numId(customerId, 'customerId');
     await customer.adGroupCriteria.create([{
-      ad_group: `customers/${cleanCustomer}/adGroups/${adGroupId}`,
+      ad_group: `customers/${cleanCustomer}/adGroups/${this.numId(adGroupId, 'adGroupId')}`,
       keyword: { text: keyword, match_type: matchType },
     } as any]);
     return { adicionada: keyword, matchType, adGroupId };
@@ -491,7 +525,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.cost_micros,
           metrics.conversions
         FROM age_range_view
-        WHERE campaign.id = ${campaignId}
+        WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
           AND segments.date ${this.buildDateFilter(dateRange)}
         ORDER BY metrics.impressions DESC
       `),
@@ -503,7 +537,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.cost_micros,
           metrics.conversions
         FROM gender_view
-        WHERE campaign.id = ${campaignId}
+        WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
           AND segments.date ${this.buildDateFilter(dateRange)}
       `),
       customer.query(`
@@ -514,7 +548,7 @@ export class GoogleAdsService implements OnModuleInit {
           metrics.cost_micros,
           metrics.conversions
         FROM income_range_view
-        WHERE campaign.id = ${campaignId}
+        WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
           AND segments.date ${this.buildDateFilter(dateRange)}
       `),
     ]);
@@ -581,7 +615,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.cost_micros,
         metrics.conversions
       FROM campaign
-      WHERE campaign.id = ${campaignId}
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
         AND segments.date ${this.buildDateFilter(dateRange)}
       ORDER BY segments.date
     `);
@@ -626,7 +660,7 @@ export class GoogleAdsService implements OnModuleInit {
         metrics.cost_micros,
         metrics.conversions
       FROM campaign
-      WHERE campaign.id = ${campaignId}
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
         AND segments.date ${this.buildDateFilter(dateRange)}
     `);
 

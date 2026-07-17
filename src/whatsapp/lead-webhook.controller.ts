@@ -1,4 +1,5 @@
 import { Controller, Post, Body, Param, Req, Res, Options, Logger } from '@nestjs/common';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { LeadsService, CreateLeadDto } from '../leads/leads.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
@@ -38,6 +39,7 @@ export class LeadWebhookController {
     private readonly crmStages: CrmStagesService,
   ) {}
 
+  @SkipThrottle()
   @Options(':slug')
   preflight(@Res() res: Response) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -46,6 +48,8 @@ export class LeadWebhookController {
     res.status(204).send();
   }
 
+  // Máx. 20 envios por minuto por IP — barra flood de leads falsos e força bruta de slug
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @Post(':slug')
   async receive(
     @Param('slug') slug: string,

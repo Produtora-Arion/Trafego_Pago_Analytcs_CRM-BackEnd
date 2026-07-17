@@ -86,16 +86,37 @@ export class LeadsService {
     return this.upsertFromWebhook({ phone, gclid: gclid ?? undefined, firstMessage });
   }
 
-  async updateStatus(id: number, status: LeadStatus): Promise<Lead> {
-    const lead = await this.repo.findOne({ where: { id } });
+  /**
+   * Monta o filtro de busca isolado por tenant.
+   * tenantId = null  → admin (acesso a qualquer lead)
+   * tenantId = string → cliente (somente leads do próprio customerId)
+   */
+  private scopedWhere(id: number, tenantId: string | null) {
+    return tenantId ? { id, customerId: tenantId } : { id };
+  }
+
+  /** Busca um lead respeitando o isolamento por tenant, ou lança 404 */
+  private async findScoped(id: number, tenantId: string | null): Promise<Lead> {
+    const lead = await this.repo.findOne({ where: this.scopedWhere(id, tenantId) });
     if (!lead) throw new NotFoundException('Lead não encontrado');
+    return lead;
+  }
+
+  async updateStatus(id: number, status: LeadStatus, tenantId: string | null): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
     lead.status = status;
     return this.repo.save(lead);
   }
 
-  async markConverted(id: number, value: number, customerId: string, conversionActionId: string, statusLabel?: string): Promise<Lead> {
-    const lead = await this.repo.findOne({ where: { id } });
-    if (!lead) throw new NotFoundException('Lead não encontrado');
+  async markConverted(
+    id: number,
+    value: number,
+    customerId: string,
+    conversionActionId: string,
+    tenantId: string | null,
+    statusLabel?: string,
+  ): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
     lead.status = statusLabel || 'Convertido';
     lead.convertedAt = new Date();
     lead.conversionValue = value;
@@ -115,7 +136,8 @@ export class LeadsService {
     return this.repo.save(lead);
   }
 
-  async deleteById(id: number): Promise<void> {
-    await this.repo.delete(id);
+  async deleteById(id: number, tenantId: string | null): Promise<void> {
+    const res = await this.repo.delete(this.scopedWhere(id, tenantId));
+    if (!res.affected) throw new NotFoundException('Lead não encontrado');
   }
 }

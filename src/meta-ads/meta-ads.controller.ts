@@ -1,9 +1,9 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { MetaAdsService } from './meta-ads.service';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { SupabaseAuthGuard, AdminOnlyGuard } from '../auth/supabase-auth.guard';
 
 @Controller('meta')
-@UseGuards(ApiKeyGuard)
+@UseGuards(SupabaseAuthGuard, AdminOnlyGuard)
 export class MetaAdsController {
   constructor(private readonly meta: MetaAdsService) {}
 

@@ -1,15 +1,21 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { GoogleAdsService } from './google-ads.service';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('ads')
-@UseGuards(ApiKeyGuard)
+@UseGuards(SupabaseAuthGuard)
 export class GoogleAdsController {
   constructor(private readonly googleAds: GoogleAdsService) {}
 
   @Get('accounts')
-  listAccounts() {
-    return this.googleAds.listManagedAccounts();
+  async listAccounts(@Req() req: any) {
+    const accounts = await this.googleAds.listManagedAccounts();
+    const user = req.user as AuthUser | undefined;
+    // Cliente enxerga somente a própria conta
+    if (user && user.role !== 'admin') {
+      return accounts.filter((a) => a.id === user.customerId);
+    }
+    return accounts;
   }
 
   @Get(':customerId/overview')

@@ -1,11 +1,17 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { CrmStagesService } from './crm-stages.service';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('crm-stages')
-@UseGuards(ApiKeyGuard)
+@UseGuards(SupabaseAuthGuard)
 export class CrmStagesController {
   constructor(private readonly service: CrmStagesService) {}
+
+  /** null para admin (acesso total), customerId do token para cliente */
+  private tenant(req: any): string | null {
+    const u = req.user as AuthUser | undefined;
+    return u && u.role !== 'admin' ? u.customerId : null;
+  }
 
   @Get()
   findAll(@Query('customerId') customerId: string) {
@@ -23,12 +29,16 @@ export class CrmStagesController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() body: { label?: string; color?: string; triggersConversion?: boolean }) {
-    return this.service.update(Number(id), body);
+  update(
+    @Param('id') id: string,
+    @Body() body: { label?: string; color?: string; triggersConversion?: boolean },
+    @Req() req: any,
+  ) {
+    return this.service.update(Number(id), body, this.tenant(req));
   }
 
   @Delete(':id')
-  delete(@Param('id') id: string) {
-    return this.service.delete(Number(id));
+  delete(@Param('id') id: string, @Req() req: any) {
+    return this.service.delete(Number(id), this.tenant(req));
   }
 }
