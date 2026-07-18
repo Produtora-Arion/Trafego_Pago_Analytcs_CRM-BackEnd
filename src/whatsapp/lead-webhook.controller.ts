@@ -7,14 +7,18 @@ import { CrmStagesService } from '../crm-stages/crm-stages.service';
 
 /** Campos reconhecidos do payload — o restante vai para extraData */
 const KNOWN_FIELDS = new Set([
-  'phone', 'telefone', 'email', 'e-mail', 'name', 'nome',
+  'phone', 'telefone', 'tel', 'whatsapp', 'celular',
+  'email', 'e-mail', 'e_mail', 'mail', 'name', 'nome',
   'gclid', 'fbclid', 'firstMessage', 'mensagem', 'message',
   'utmSource', 'utm_source', 'utmMedium', 'utm_medium',
   'utmCampaign', 'utm_campaign', 'utmContent', 'utm_content',
   'utmTerm', 'utm_term', 'landingPage', 'landing_page', 'pageUrl', 'page_url',
-  'referrer', 'ip', 'userAgent', 'user_agent',
+  'referrer', 'referer', 'ip', 'userAgent', 'user_agent',
   'browserLanguage', 'browser_language', 'language',
   'sessionId', 'session_id',
+  // Pergunta de múltipla escolha do formulário (nome varia por cliente)
+  'formChoice', 'form_choice', 'escolha', 'opcao', 'interesse',
+  'assunto', 'beneficio', 'servico', 'categoria',
 ]);
 
 const pick = (body: Record<string, any>, ...keys: string[]): string | undefined => {
@@ -94,13 +98,14 @@ export class LeadWebhookController {
       }
     }
 
-    // 5. Etapa inicial = primeira coluna do CRM deste cliente (cria padrão se não existir)
+    // 5. Etapa de entrada — a marcada explicitamente como "recebe leads novos"
+    // (ou a primeira por posição, se nenhuma foi marcada). Cria etapas padrão se não existir.
     let firstStageLabel = 'Novo';
     try {
-      const stages = await this.crmStages.findAll(customerId);
-      if (stages.length > 0) firstStageLabel = stages[0].label;
+      const entryStage = await this.crmStages.findEntryStage(customerId);
+      if (entryStage) firstStageLabel = entryStage.label;
     } catch (err) {
-      this.logger.error(`Webhook ${slug}: erro ao buscar etapas — usando "Novo"`, err?.stack);
+      this.logger.error(`Webhook ${slug}: erro ao buscar etapa de entrada — usando "Novo"`, err?.stack);
     }
 
     const dto: CreateLeadDto = {
@@ -112,6 +117,7 @@ export class LeadWebhookController {
       gclid: pick(body, 'gclid'),
       fbclid: pick(body, 'fbclid'),
       firstMessage: pick(body, 'firstMessage', 'mensagem', 'message'),
+      formChoice: pick(body, 'formChoice', 'form_choice', 'escolha', 'opcao', 'interesse', 'assunto', 'beneficio', 'servico', 'categoria'),
       utmSource: pick(body, 'utmSource', 'utm_source'),
       utmMedium: pick(body, 'utmMedium', 'utm_medium'),
       utmCampaign: pick(body, 'utmCampaign', 'utm_campaign'),

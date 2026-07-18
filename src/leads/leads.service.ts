@@ -12,6 +12,7 @@ export interface CreateLeadDto {
   customerId?: string;
   conversionActionId?: string;
   firstMessage?: string;
+  formChoice?: string;
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
@@ -66,6 +67,7 @@ export class LeadsService {
         'name', 'email', 'phone', 'gclid', 'fbclid',
         'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm',
         'landingPage', 'referrer', 'ip', 'userAgent', 'browserLanguage', 'sessionId',
+        'formChoice',
       ];
       for (const key of fillIfEmpty) {
         if (data[key] && !existing[key]) {
@@ -77,7 +79,7 @@ export class LeadsService {
       return existing;
     }
 
-    const lead = this.repo.create({ ...data, status: data.status || 'Novo' });
+    const lead = this.repo.create({ ...data, status: data.status || 'Novo', statusChangedAt: new Date() });
     return this.repo.save(lead);
   }
 
@@ -105,6 +107,7 @@ export class LeadsService {
   async updateStatus(id: number, status: LeadStatus, tenantId: string | null): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
     lead.status = status;
+    lead.statusChangedAt = new Date();
     return this.repo.save(lead);
   }
 
@@ -118,6 +121,7 @@ export class LeadsService {
   ): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
     lead.status = statusLabel || 'Convertido';
+    lead.statusChangedAt = new Date();
     lead.convertedAt = new Date();
     lead.conversionValue = value;
     if (customerId) lead.customerId = customerId;
@@ -132,7 +136,7 @@ export class LeadsService {
   async createManual(data: CreateLeadDto): Promise<Lead> {
     const existing = await this.findDuplicate(data);
     if (existing) return existing;
-    const lead = this.repo.create({ ...data, status: data.status || 'Novo' });
+    const lead = this.repo.create({ ...data, status: data.status || 'Novo', statusChangedAt: new Date() });
     return this.repo.save(lead);
   }
 

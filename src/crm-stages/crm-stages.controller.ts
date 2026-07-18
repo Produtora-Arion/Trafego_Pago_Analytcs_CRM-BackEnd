@@ -19,8 +19,8 @@ export class CrmStagesController {
   }
 
   @Post()
-  create(@Body() body: { customerId: string; label: string; color: string; triggersConversion?: boolean }) {
-    return this.service.create(body.customerId, body.label, body.color, body.triggersConversion ?? false);
+  create(@Body() body: { customerId: string; label: string; color: string; triggersConversion?: boolean; isEntryStage?: boolean }) {
+    return this.service.create(body.customerId, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
   }
 
   @Patch('reorder')
@@ -31,7 +31,7 @@ export class CrmStagesController {
   @Patch(':id')
   update(
     @Param('id') id: string,
-    @Body() body: { label?: string; color?: string; triggersConversion?: boolean },
+    @Body() body: { label?: string; color?: string; triggersConversion?: boolean; isEntryStage?: boolean },
     @Req() req: any,
   ) {
     return this.service.update(Number(id), body, this.tenant(req));
