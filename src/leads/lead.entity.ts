@@ -71,11 +71,19 @@ export class Lead {
   @Column({ default: 'Novo' })
   status: LeadStatus;
 
+  /** Quando o lead entrou na etapa atual (usado para calcular "tempo na etapa") */
+  @Column({ nullable: true })
+  statusChangedAt: Date;
+
   @Column({ nullable: true, type: 'real' })
   conversionValue: number;
 
   @Column({ nullable: true })
   firstMessage: string;
+
+  /** Resposta da pergunta de múltipla escolha do formulário (varia por cliente) */
+  @Column({ nullable: true })
+  formChoice: string;
 
   @CreateDateColumn()
   firstContactAt: Date;
