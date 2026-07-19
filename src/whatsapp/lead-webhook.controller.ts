@@ -100,10 +100,15 @@ export class LeadWebhookController {
 
     // 5. Etapa de entrada — a marcada explicitamente como "recebe leads novos"
     // (ou a primeira por posição, se nenhuma foi marcada). Cria etapas padrão se não existir.
+    // stageId é a referência estável salva no lead; status (label) é só para exibição.
     let firstStageLabel = 'Novo';
+    let firstStageId: number | undefined;
     try {
       const entryStage = await this.crmStages.findEntryStage(customerId);
-      if (entryStage) firstStageLabel = entryStage.label;
+      if (entryStage) {
+        firstStageLabel = entryStage.label;
+        firstStageId = entryStage.id;
+      }
     } catch (err) {
       this.logger.error(`Webhook ${slug}: erro ao buscar etapa de entrada — usando "Novo"`, err?.stack);
     }
@@ -111,6 +116,7 @@ export class LeadWebhookController {
     const dto: CreateLeadDto = {
       customerId,
       status: firstStageLabel,
+      stageId: firstStageId,
       phone,
       email,
       name: pick(body, 'name', 'nome'),

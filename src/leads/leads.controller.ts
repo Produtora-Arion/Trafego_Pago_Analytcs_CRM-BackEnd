@@ -2,6 +2,7 @@ import { Controller, Get, Patch, Post, Delete, Param, Body, Query, Req, UseGuard
 import { ConfigService } from '@nestjs/config';
 import { LeadsService, CreateLeadDto } from './leads.service';
 import { GoogleAdsService } from '../google-ads/google-ads.service';
+import { CrmStagesService } from '../crm-stages/crm-stages.service';
 import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('leads')
@@ -10,6 +11,7 @@ export class LeadsController {
   constructor(
     private readonly leads: LeadsService,
     private readonly googleAds: GoogleAdsService,
+    private readonly crmStages: CrmStagesService,
     private readonly config: ConfigService,
   ) {}
 
@@ -34,9 +36,15 @@ export class LeadsController {
     return this.leads.deleteById(Number(id), this.tenant(req));
   }
 
-  @Patch(':id/status')
-  updateStatus(@Param('id') id: string, @Body('status') status: string, @Req() req: any) {
-    return this.leads.updateStatus(Number(id), status, this.tenant(req));
+  /**
+   * Move o lead para outra etapa pelo ID (imutável) — nunca pelo nome.
+   * findById() já garante que a etapa pertence ao tenant certo.
+   */
+  @Patch(':id/stage')
+  async updateStage(@Param('id') id: string, @Body('stageId') stageId: number, @Req() req: any) {
+    const tenantId = this.tenant(req);
+    const stage = await this.crmStages.findById(Number(stageId), tenantId);
+    return this.leads.updateStage(Number(id), stage.id, stage.label, tenantId);
   }
 
   @Post(':id/convert')
@@ -46,18 +54,28 @@ export class LeadsController {
     @Body('value') value: number,
     @Body('customerId') customerIdBody: string,
     @Body('conversionActionId') conversionActionIdBody: string,
-    @Body('status') statusBody?: string,
+    @Body('stageId') stageId?: number,
   ) {
+    const tenantId = this.tenant(req);
     const customerId = customerIdBody || this.config.get('GA_CONVERSION_CUSTOMER_ID', '');
     const conversionActionId = conversionActionIdBody || this.config.get('GA_CONVERSION_ACTION_ID', '');
+
+    let stageLabel: string | undefined;
+    let resolvedStageId: number | undefined;
+    if (stageId) {
+      const stage = await this.crmStages.findById(Number(stageId), tenantId);
+      stageLabel = stage.label;
+      resolvedStageId = stage.id;
+    }
 
     const lead = await this.leads.markConverted(
       Number(id),
       value ?? 0,
       customerId,
       conversionActionId,
-      this.tenant(req),
-      statusBody,
+      tenantId,
+      resolvedStageId,
+      stageLabel,
     );
 
     if (lead.gclid) {
