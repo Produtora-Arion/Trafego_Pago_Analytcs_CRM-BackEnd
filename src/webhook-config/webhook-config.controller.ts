@@ -1,9 +1,14 @@
-import { Controller, Get, Post, Param, Query, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Query, Body, UseGuards } from '@nestjs/common';
 import { WebhookConfigService } from './webhook-config.service';
-import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { SupabaseAuthGuard, AdminOnlyGuard } from '../auth/supabase-auth.guard';
 
+/**
+ * Configuração de webhook e conversão é 100% administrativa — o cliente nunca
+ * vê nem edita isso, pra evitar configuração errada (URL/token do webhook,
+ * conversion action ID do Google Ads). Só quem tem role 'admin' acessa.
+ */
 @Controller('webhook-config')
-@UseGuards(SupabaseAuthGuard)
+@UseGuards(SupabaseAuthGuard, AdminOnlyGuard)
 export class WebhookConfigController {
   constructor(private readonly service: WebhookConfigService) {}
 
@@ -23,5 +28,14 @@ export class WebhookConfigController {
     @Body('name') name?: string,
   ) {
     return this.service.regenerate(customerId, name);
+  }
+
+  /** Define o conversion action ID do Google Ads usado nas conversões offline deste cliente. */
+  @Patch(':customerId/conversion-action')
+  updateConversionAction(
+    @Param('customerId') customerId: string,
+    @Body('conversionActionId') conversionActionId: string,
+  ) {
+    return this.service.updateConversionActionId(customerId, conversionActionId);
   }
 }

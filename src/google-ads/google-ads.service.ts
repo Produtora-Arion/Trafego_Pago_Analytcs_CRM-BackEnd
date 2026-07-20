@@ -417,13 +417,6 @@ export class GoogleAdsService implements OnModuleInit {
       `),
     ]);
 
-    console.log(`[getNegativeKeywords] customerId=${customerId} campaignId=${campaignId} campNegs=${campNegs.length} groupNegs=${groupNegs.length}`);
-    if (groupNegs.length > 0) {
-      const sample = groupNegs[0];
-      console.log('[getNegativeKeywords] sample row keys:', Object.keys(sample));
-      console.log('[getNegativeKeywords] sample ad_group_criterion:', JSON.stringify(sample.ad_group_criterion));
-    }
-
     return {
       nivel_campanha: campNegs.map((r) => ({
         resource_name: r.campaign_criterion.resource_name ?? '',
@@ -698,7 +691,7 @@ export class GoogleAdsService implements OnModuleInit {
     convertedAt: Date,
     value: number,
   ): Promise<{ success: boolean; detail?: string }> {
-    const cleanId = customerId.replace(/-/g, '');
+    const cleanId = this.numId(customerId, 'customerId');
 
     // Obter access token via refresh token
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {

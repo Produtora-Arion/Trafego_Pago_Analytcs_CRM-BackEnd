@@ -13,19 +13,26 @@ export class CrmStagesController {
     return u && u.role !== 'admin' ? u.customerId : null;
   }
 
+  /** Cliente sempre força o próprio customerId (nunca confia no query param); admin pode filtrar por qualquer um. */
   @Get()
-  findAll(@Query('customerId') customerId: string) {
-    return this.service.findAll(customerId);
+  findAll(@Query('customerId') customerId: string, @Req() req: any) {
+    return this.service.findAll(this.tenant(req) ?? customerId);
   }
 
+  /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
-  create(@Body() body: { customerId: string; label: string; color: string; triggersConversion?: boolean; isEntryStage?: boolean }) {
-    return this.service.create(body.customerId, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
+  create(
+    @Body() body: { customerId: string; label: string; color: string; triggersConversion?: boolean; isEntryStage?: boolean },
+    @Req() req: any,
+  ) {
+    const customerId = this.tenant(req) ?? body.customerId;
+    return this.service.create(customerId, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
   }
 
   @Patch('reorder')
-  reorder(@Body() body: { customerId: string; orderedIds: number[] }) {
-    return this.service.reorder(body.customerId, body.orderedIds);
+  reorder(@Body() body: { customerId: string; orderedIds: number[] }, @Req() req: any) {
+    const customerId = this.tenant(req) ?? body.customerId;
+    return this.service.reorder(customerId, body.orderedIds);
   }
 
   @Patch(':id')

@@ -18,6 +18,10 @@ export class WebhookToken {
   @Column({ default: true })
   active: boolean;
 
+  /** ID da ação de conversão do Google Ads DESTA conta — cada cliente tem a sua própria. */
+  @Column({ nullable: true })
+  conversionActionId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

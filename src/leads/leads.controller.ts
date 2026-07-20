@@ -1,8 +1,9 @@
-import { Controller, Get, Patch, Post, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Delete, Param, Body, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LeadsService, CreateLeadDto } from './leads.service';
 import { GoogleAdsService } from '../google-ads/google-ads.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
+import { WebhookConfigService } from '../webhook-config/webhook-config.service';
 import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('leads')
@@ -12,6 +13,7 @@ export class LeadsController {
     private readonly leads: LeadsService,
     private readonly googleAds: GoogleAdsService,
     private readonly crmStages: CrmStagesService,
+    private readonly webhookConfig: WebhookConfigService,
     private readonly config: ConfigService,
   ) {}
 
@@ -21,19 +23,38 @@ export class LeadsController {
     return u && u.role !== 'admin' ? u.customerId : null;
   }
 
+  /** Cliente sempre força o próprio customerId (nunca confia no query param); admin pode listar tudo ou filtrar. */
   @Get()
-  findAll(@Query('customerId') customerId?: string) {
-    return this.leads.findAll(customerId);
+  findAll(@Query('customerId') customerId: string | undefined, @Req() req: any) {
+    return this.leads.findAll(this.tenant(req) ?? customerId);
   }
 
+  /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
-  create(@Body() body: CreateLeadDto) {
+  create(@Body() body: CreateLeadDto, @Req() req: any) {
+    const tenantId = this.tenant(req);
+    if (tenantId) body.customerId = tenantId;
     return this.leads.upsertFromWebhook(body);
   }
 
   @Delete(':id')
   deleteById(@Param('id') id: string, @Req() req: any) {
     return this.leads.deleteById(Number(id), this.tenant(req));
+  }
+
+  /** Edição manual dos campos do lead (contato, UTMs, valor da conversão etc.) no modal de rastreamento */
+  @Patch(':id')
+  updateFields(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+    return this.leads.updateFields(Number(id), body, this.tenant(req));
+  }
+
+  /** Substitui a lista inteira de lembretes do lead — máximo 3 */
+  @Patch(':id/reminders')
+  updateReminders(@Param('id') id: string, @Body('reminders') reminders: any[], @Req() req: any) {
+    if (!Array.isArray(reminders) || reminders.length > 3) {
+      throw new BadRequestException('Máximo de 3 lembretes por lead');
+    }
+    return this.leads.updateReminders(Number(id), JSON.stringify(reminders), this.tenant(req));
   }
 
   /**
@@ -53,12 +74,21 @@ export class LeadsController {
     @Req() req: any,
     @Body('value') value: number,
     @Body('customerId') customerIdBody: string,
-    @Body('conversionActionId') conversionActionIdBody: string,
     @Body('stageId') stageId?: number,
   ) {
     const tenantId = this.tenant(req);
-    const customerId = customerIdBody || this.config.get('GA_CONVERSION_CUSTOMER_ID', '');
-    const conversionActionId = conversionActionIdBody || this.config.get('GA_CONVERSION_ACTION_ID', '');
+    // Cliente: sempre a própria conta (nunca confia no body). Admin: o que veio
+    // no body, com a env var como último fallback legado.
+    const customerId = tenantId || customerIdBody || this.config.get('GA_CONVERSION_CUSTOMER_ID', '');
+
+    // Cada cliente tem sua própria conta Google Ads e sua própria ação de
+    // conversão — nunca aceita esse valor vindo do body (um cliente poderia
+    // apontar pra ação de conversão de outra conta). Resolve sempre pelo
+    // customerId de destino; a env var só cobre o caso legado de quem nunca
+    // configurou nada em ⚡ Webhook.
+    const conversionActionId =
+      (await this.webhookConfig.getConversionActionId(customerId)) ||
+      this.config.get('GA_CONVERSION_ACTION_ID', '');
 
     let stageLabel: string | undefined;
     let resolvedStageId: number | undefined;

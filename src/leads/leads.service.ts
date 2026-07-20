@@ -139,6 +139,31 @@ export class LeadsService {
     await this.repo.update(id, { conversionUploadedAt: new Date() });
   }
 
+  /** Campos editáveis manualmente pelo usuário no modal de rastreamento do lead */
+  private static readonly EDITABLE_FIELDS = [
+    'name', 'email', 'phone', 'formChoice',
+    'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm',
+    'extraData', 'conversionValue',
+  ] as const;
+
+  async updateFields(
+    id: number,
+    fields: Partial<Record<typeof LeadsService.EDITABLE_FIELDS[number], any>>,
+    tenantId: string | null,
+  ): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
+    for (const key of LeadsService.EDITABLE_FIELDS) {
+      if (fields[key] !== undefined) (lead as any)[key] = fields[key];
+    }
+    return this.repo.save(lead);
+  }
+
+  async updateReminders(id: number, reminders: string | null, tenantId: string | null): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
+    lead.reminders = reminders;
+    return this.repo.save(lead);
+  }
+
   async createManual(data: CreateLeadDto): Promise<Lead> {
     const existing = await this.findDuplicate(data);
     if (existing) return existing;

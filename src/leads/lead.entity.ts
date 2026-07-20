@@ -102,4 +102,8 @@ export class Lead {
 
   @Column({ nullable: true })
   conversionUploadedAt: Date;
+
+  /** Lembretes definidos manualmente — até 3 por lead. JSON: [{id, date, text}] */
+  @Column({ nullable: true, type: 'text' })
+  reminders: string;
 }
