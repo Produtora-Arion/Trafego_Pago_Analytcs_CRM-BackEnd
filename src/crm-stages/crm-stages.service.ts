@@ -1,8 +1,19 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import { randomInt } from 'crypto';
 import { CrmStage } from './crm-stage.entity';
 import { Lead } from '../leads/lead.entity';
+
+// Sem 0/O/1/I/L — evita confusão visual ao ler o código
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/** Código curto e aleatório (6 chars) — identificador visível e imutável, gerado só na criação da etapa. */
+function generateStageCode(): string {
+  let code = '';
+  for (let i = 0; i < 6; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
+  return code;
+}
 
 const DEFAULT_STAGES = [
   { label: 'Novo',           color: '#0ea5e9', position: 0, triggersConversion: false, isEntryStage: true  },
@@ -29,12 +40,24 @@ export class CrmStagesService {
     // Cria etapas padrão na primeira vez que um cliente acessa o CRM
     if (stages.length === 0) {
       const created = await Promise.all(
-        DEFAULT_STAGES.map(s => this.stagesRepo.save(this.stagesRepo.create({ ...s, customerId }))),
+        DEFAULT_STAGES.map(s => this.stagesRepo.save(this.stagesRepo.create({ ...s, customerId, code: generateStageCode() }))),
       );
       return created.sort((a, b) => a.position - b.position);
     }
 
     return stages;
+  }
+
+  /**
+   * Busca uma etapa pelo seu ID imutável, respeitando o isolamento por tenant
+   * (cliente só resolve etapas da própria conta). Usado pelo LeadsController
+   * para validar/traduzir o stageId recebido nas rotas de mover/converter lead.
+   */
+  async findById(id: number, tenantId: string | null): Promise<CrmStage> {
+    const where = tenantId ? { id, customerId: tenantId } : { id };
+    const stage = await this.stagesRepo.findOne({ where });
+    if (!stage) throw new NotFoundException('Etapa não encontrada');
+    return stage;
   }
 
   /** Etapa que recebe novos leads do webhook. Sem marcação explícita, cai na primeira por posição. */
@@ -53,7 +76,7 @@ export class CrmStagesService {
   ): Promise<CrmStage> {
     const max = await this.stagesRepo.maximum('position', { customerId }) ?? -1;
     if (isEntryStage) await this.clearEntryStage(customerId);
-    const stage = this.stagesRepo.create({ customerId, label, color, position: (max as number) + 1, triggersConversion, isEntryStage });
+    const stage = this.stagesRepo.create({ customerId, label, color, position: (max as number) + 1, triggersConversion, isEntryStage, code: generateStageCode() });
     return this.stagesRepo.save(stage);
   }
 
@@ -66,7 +89,7 @@ export class CrmStagesService {
     const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
-    const oldLabel = stage.label;
+    const labelChanged = data.label !== undefined && data.label !== stage.label;
 
     if (data.label !== undefined) stage.label = data.label;
     if (data.color !== undefined) stage.color = data.color;
@@ -79,12 +102,11 @@ export class CrmStagesService {
 
     const saved = await this.stagesRepo.save(stage);
 
-    // Atualiza leads que tinham a etapa renomeada
-    if (data.label && data.label !== oldLabel) {
-      await this.leadsRepo.update(
-        { customerId: stage.customerId, status: oldLabel },
-        { status: data.label },
-      );
+    // Atualiza o rótulo (denormalizado, só para exibição) dos leads desta etapa.
+    // Casa por stageId (imutável) — nunca por nome, então renomear nunca "perde"
+    // ou mistura leads, mesmo que dois nomes se pareçam ou colidam temporariamente.
+    if (labelChanged) {
+      await this.leadsRepo.update({ stageId: stage.id }, { status: data.label! });
     }
 
     return saved;
@@ -107,10 +129,9 @@ export class CrmStagesService {
     const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
-    // Nunca excluir uma etapa que ainda tem leads — força mover/excluir os leads antes
-    const leadCount = await this.leadsRepo.count({
-      where: { customerId: stage.customerId, status: stage.label },
-    });
+    // Nunca excluir uma etapa que ainda tem leads — força mover/excluir os leads antes.
+    // Casa por stageId (imutável), não por nome.
+    const leadCount = await this.leadsRepo.count({ where: { stageId: stage.id } });
     if (leadCount > 0) {
       throw new ConflictException(
         `Não é possível excluir: esta etapa tem ${leadCount} lead(s). Mova-os para outra etapa antes de excluir.`,

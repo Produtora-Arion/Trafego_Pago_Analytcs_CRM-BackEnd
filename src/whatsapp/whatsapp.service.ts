@@ -30,10 +30,6 @@ export class WhatsAppService {
     const gclidMatch = text.match(/Ref:\s*([A-Za-z0-9_\-]{20,})/);
     const gclid = gclidMatch?.[1] ?? null;
 
-    const lead = await this.leads.upsertFromWhatsApp(phone, gclid, text);
-
-    console.log(
-      `[WhatsApp] Mensagem de ${phone} | GCLID: ${gclid ?? 'não rastreado'} | Lead ID: ${lead.id} | Status: ${lead.status}`,
-    );
+    await this.leads.upsertFromWhatsApp(phone, gclid, text);
   }
 }

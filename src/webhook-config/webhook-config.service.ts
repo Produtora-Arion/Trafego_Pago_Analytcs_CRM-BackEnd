@@ -81,15 +81,35 @@ export class WebhookConfigService {
     return this.repo.save(entry);
   }
 
-  async validateToken(token: string): Promise<string | null> {
-    if (!token) return null;
-    const entry = await this.repo.findOne({ where: { token, active: true } });
-    return entry ? entry.customerId : null;
-  }
-
   async validateSlug(slug: string): Promise<string | null> {
     if (!slug) return null;
     const entry = await this.repo.findOne({ where: { slug, active: true } });
     return entry ? entry.customerId : null;
+  }
+
+  /**
+   * ID da ação de conversão do Google Ads configurada para este cliente.
+   * Não cria linha nova — se o cliente nunca configurou, retorna null (quem
+   * chama decide o fallback). Cada cliente tem sua própria conta Google Ads,
+   * então esse valor nunca pode ser compartilhado entre clientes.
+   */
+  async getConversionActionId(customerId: string): Promise<string | null> {
+    const entry = await this.repo.findOne({ where: { customerId } });
+    return entry?.conversionActionId ?? null;
+  }
+
+  async updateConversionActionId(customerId: string, conversionActionId: string): Promise<WebhookToken> {
+    const existing = await this.repo.findOne({ where: { customerId } });
+    if (existing) {
+      existing.conversionActionId = conversionActionId;
+      return this.repo.save(existing);
+    }
+    const entry = this.repo.create({
+      customerId,
+      token: this.generateToken(),
+      slug: this.generateSlug(customerId),
+      conversionActionId,
+    });
+    return this.repo.save(entry);
   }
 }

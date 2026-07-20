@@ -26,6 +26,8 @@ export interface CreateLeadDto {
   sessionId?: string;
   extraData?: string;
   status?: LeadStatus;
+  /** Referência estável à etapa do CRM — fonte de verdade da coluna do lead */
+  stageId?: number;
 }
 
 @Injectable()
@@ -104,9 +106,11 @@ export class LeadsService {
     return lead;
   }
 
-  async updateStatus(id: number, status: LeadStatus, tenantId: string | null): Promise<Lead> {
+  /** Move o lead para outra etapa. stageId é a fonte de verdade; status (label) só acompanha para exibição. */
+  async updateStage(id: number, stageId: number, label: string, tenantId: string | null): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
-    lead.status = status;
+    lead.stageId = stageId;
+    lead.status = label;
     lead.statusChangedAt = new Date();
     return this.repo.save(lead);
   }
@@ -117,10 +121,12 @@ export class LeadsService {
     customerId: string,
     conversionActionId: string,
     tenantId: string | null,
+    stageId?: number,
     statusLabel?: string,
   ): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
     lead.status = statusLabel || 'Convertido';
+    if (stageId) lead.stageId = stageId;
     lead.statusChangedAt = new Date();
     lead.convertedAt = new Date();
     lead.conversionValue = value;
@@ -131,6 +137,31 @@ export class LeadsService {
 
   async markConversionUploaded(id: number): Promise<void> {
     await this.repo.update(id, { conversionUploadedAt: new Date() });
+  }
+
+  /** Campos editáveis manualmente pelo usuário no modal de rastreamento do lead */
+  private static readonly EDITABLE_FIELDS = [
+    'name', 'email', 'phone', 'formChoice',
+    'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm',
+    'extraData', 'conversionValue',
+  ] as const;
+
+  async updateFields(
+    id: number,
+    fields: Partial<Record<typeof LeadsService.EDITABLE_FIELDS[number], any>>,
+    tenantId: string | null,
+  ): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
+    for (const key of LeadsService.EDITABLE_FIELDS) {
+      if (fields[key] !== undefined) (lead as any)[key] = fields[key];
+    }
+    return this.repo.save(lead);
+  }
+
+  async updateReminders(id: number, reminders: string | null, tenantId: string | null): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
+    lead.reminders = reminders;
+    return this.repo.save(lead);
   }
 
   async createManual(data: CreateLeadDto): Promise<Lead> {

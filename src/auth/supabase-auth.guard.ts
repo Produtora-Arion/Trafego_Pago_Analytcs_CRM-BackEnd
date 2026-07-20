@@ -60,7 +60,16 @@ export class SupabaseAuthGuard implements CanActivate {
 
     req.user = { id: user.id, email: user.email ?? null, role, customerId } as AuthUser;
 
-    // 3) Isolamento: client só acessa o próprio customerId
+    // 3) Isolamento: client só acessa o próprio customerId.
+    // IMPORTANTE: isto só REJEITA um customerId explícito e divergente — nunca
+    // tenta "preencher" um customerId ausente aqui. No Express 5, req.query é
+    // um getter recalculado a partir da URL a cada leitura; escrever nele
+    // (req.query.customerId = ...) não persiste, então qualquer controller que
+    // dependesse disso pra filtrar ficava, na prática, SEM filtro nenhum quando
+    // o client omitia o parâmetro — vazando dados de outros clientes. Por isso
+    // cada controller resolve o customerId efetivo explicitamente (via um
+    // helper tenant(req) que lê req.user.customerId, sempre confiável) em vez
+    // de confiar em qualquer auto-preenchimento por aqui.
     if (role !== 'admin') {
       if (!customerId) {
         throw new ForbiddenException('Usuário sem cliente vinculado — contate o administrador');
@@ -69,11 +78,6 @@ export class SupabaseAuthGuard implements CanActivate {
         req.params?.customerId ?? req.query?.customerId ?? req.body?.customerId;
       if (requested && String(requested) !== String(customerId)) {
         throw new ForbiddenException('Acesso negado aos dados de outro cliente');
-      }
-      // Injeta o customerId do token onde não veio informado
-      if (req.query && !req.query.customerId) req.query.customerId = customerId;
-      if (req.body && typeof req.body === 'object' && !req.body.customerId) {
-        req.body.customerId = customerId;
       }
     }
 

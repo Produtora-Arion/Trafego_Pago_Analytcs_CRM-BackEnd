@@ -68,6 +68,15 @@ export class Lead {
   @Column({ nullable: true })
   conversionActionId: string;
 
+  /**
+   * Referência estável e imutável à etapa do CRM (CrmStage.id) — nunca muda
+   * quando a etapa é renomeada ou reordenada. É a fonte de verdade de "em
+   * qual etapa este lead está"; `status` abaixo é só o nome para exibição,
+   * mantido em sincronia mas nunca usado para decidir a coluna do lead.
+   */
+  @Column({ nullable: true })
+  stageId: number;
+
   @Column({ default: 'Novo' })
   status: LeadStatus;
 
@@ -93,4 +102,8 @@ export class Lead {
 
   @Column({ nullable: true })
   conversionUploadedAt: Date;
+
+  /** Lembretes definidos manualmente — até 3 por lead. JSON: [{id, date, text}] */
+  @Column({ nullable: true, type: 'text' })
+  reminders: string;
 }
