@@ -4,10 +4,9 @@
   "description": "MCP Server para Google Ads - Produtora Arion",
   "scripts": {
     "build": "nest build",
-    "start": "node dist/src/main",
-    "start:api": "SERVER_MODE=http node dist/src/main",
-    "start:mcp": "node dist/src/main",
-    "start:dev": "SERVER_MODE=http nest start --watch",
+    "start": "cross-env SERVER_MODE=http node dist/src/main",
+    "start:mcp": "cross-env SERVER_MODE=mcp node dist/src/main",
+    "start:dev": "cross-env SERVER_MODE=http nest start --watch",
     "get-token": "ts-node -r tsconfig-paths/register scripts/get-refresh-token.ts"
   },
   "dependencies": {
@@ -32,6 +31,7 @@
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
     "@types/node": "^20.0.0",
+    "cross-env": "^10.1.0",
     "ts-node": "^10.9.0",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.0.0"
