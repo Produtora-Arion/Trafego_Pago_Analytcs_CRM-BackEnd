@@ -9,7 +9,7 @@ services:
     plan: starter # plano pago, sempre ligado (sem hibernação)
     branch: Main
     buildCommand: npm install --legacy-peer-deps && npm run build
-    startCommand: node dist/src/main.js
+    startCommand: npm run start
     healthCheckPath: /health
     autoDeploy: true
     envVars:
