@@ -12,14 +12,14 @@ export class WebhookToken {
   token: string;
 
   /** URL-friendly slug: {nome-sanitizado}-{8 hex chars}  ex: patricia-digital-a3f9e2bc */
-  @Column({ unique: true, nullable: true })
+  @Column({ unique: true, nullable: true, type: 'varchar' })
   slug: string | null;
 
   @Column({ default: true })
   active: boolean;
 
   /** ID da ação de conversão do Google Ads DESTA conta — cada cliente tem a sua própria. */
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'varchar' })
   conversionActionId: string | null;
 
   @CreateDateColumn()

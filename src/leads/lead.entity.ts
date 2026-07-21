@@ -77,7 +77,7 @@ export class Lead {
   @Column({ nullable: true })
   stageId: number;
 
-  @Column({ default: 'Novo' })
+  @Column({ default: 'Novo', type: 'varchar' })
   status: LeadStatus;
 
   /** Quando o lead entrou na etapa atual (usado para calcular "tempo na etapa") */
