@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Req, UseGuards } from '@nestjs/common';
 import { CrmStagesService } from './crm-stages.service';
+import { CreateCrmStageDto, UpdateCrmStageDto, ReorderCrmStagesDto } from './crm-stages.dto';
 import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('crm-stages')
@@ -21,26 +22,19 @@ export class CrmStagesController {
 
   /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
-  create(
-    @Body() body: { customerId: string; label: string; color: string; triggersConversion?: boolean; isEntryStage?: boolean },
-    @Req() req: any,
-  ) {
+  create(@Body() body: CreateCrmStageDto, @Req() req: any) {
     const customerId = this.tenant(req) ?? body.customerId;
-    return this.service.create(customerId, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
+    return this.service.create(customerId!, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
   }
 
   @Patch('reorder')
-  reorder(@Body() body: { customerId: string; orderedIds: number[] }, @Req() req: any) {
+  reorder(@Body() body: ReorderCrmStagesDto, @Req() req: any) {
     const customerId = this.tenant(req) ?? body.customerId;
-    return this.service.reorder(customerId, body.orderedIds);
+    return this.service.reorder(customerId!, body.orderedIds);
   }
 
   @Patch(':id')
-  update(
-    @Param('id') id: string,
-    @Body() body: { label?: string; color?: string; triggersConversion?: boolean; isEntryStage?: boolean },
-    @Req() req: any,
-  ) {
+  update(@Param('id') id: string, @Body() body: UpdateCrmStageDto, @Req() req: any) {
     return this.service.update(Number(id), body, this.tenant(req));
   }
 

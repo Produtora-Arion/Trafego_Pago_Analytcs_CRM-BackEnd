@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
+import { timingSafeEqual } from 'crypto';
 
 export interface AuthUser {
   id: string | null;
@@ -42,7 +43,7 @@ export class SupabaseAuthGuard implements CanActivate {
     // 1) Acesso servidor-a-servidor via API key (equivale a admin)
     const apiKey = req.headers['x-api-key'];
     const validKey = this.config.get('API_KEY');
-    if (apiKey && validKey && apiKey === validKey) {
+    if (typeof apiKey === 'string' && validKey && this.safeCompare(apiKey, validKey)) {
       req.user = { id: null, email: null, role: 'admin', customerId: null } as AuthUser;
       return true;
     }
@@ -82,6 +83,13 @@ export class SupabaseAuthGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /** Compara em tempo constante — evita vazar a x-api-key por diferença de timing. */
+  private safeCompare(a: string, b: string): boolean {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
   }
 
   /** Valida o token no Supabase com cache de 60s para não pesar as requisições */

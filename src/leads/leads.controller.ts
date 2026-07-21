@@ -1,6 +1,6 @@
 import { Controller, Get, Patch, Post, Delete, Param, Body, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { LeadsService, CreateLeadDto } from './leads.service';
+import { LeadsService, CreateLeadDto, UpdateLeadFieldsDto } from './leads.service';
 import { GoogleAdsService } from '../google-ads/google-ads.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
@@ -29,6 +29,36 @@ export class LeadsController {
     return this.leads.findAll(this.tenant(req) ?? customerId);
   }
 
+  /**
+   * Funil simples do mês: quantos leads (que chegaram naquele mês) estão
+   * hoje em cada etapa. Inclui etapas com zero leads pra manter a forma do
+   * funil sempre completa, na mesma ordem das colunas do Kanban.
+   */
+  @Get('funnel')
+  async getFunnel(
+    @Query('customerId') customerId: string | undefined,
+    @Query('month') month: string,
+    @Req() req: any,
+  ) {
+    const effectiveCustomerId = this.tenant(req) ?? customerId;
+    if (!effectiveCustomerId) throw new BadRequestException('customerId é obrigatório');
+    if (!/^\d{4}-\d{2}$/.test(month || '')) throw new BadRequestException('month deve estar no formato YYYY-MM');
+
+    const [stages, counts] = await Promise.all([
+      this.crmStages.findAll(effectiveCustomerId),
+      this.leads.getMonthlyFunnel(effectiveCustomerId, month),
+    ]);
+
+    const countMap = new Map(counts.map((c) => [c.stageId, c.count]));
+    const total = counts.reduce((sum, c) => sum + c.count, 0);
+
+    return {
+      month,
+      total,
+      stages: stages.map((s) => ({ stageId: s.id, label: s.label, color: s.color, count: countMap.get(s.id) ?? 0 })),
+    };
+  }
+
   /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
   create(@Body() body: CreateLeadDto, @Req() req: any) {
@@ -44,7 +74,7 @@ export class LeadsController {
 
   /** Edição manual dos campos do lead (contato, UTMs, valor da conversão etc.) no modal de rastreamento */
   @Patch(':id')
-  updateFields(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+  updateFields(@Param('id') id: string, @Body() body: UpdateLeadFieldsDto, @Req() req: any) {
     return this.leads.updateFields(Number(id), body, this.tenant(req));
   }
 
@@ -119,7 +149,13 @@ export class LeadsController {
       if (success) {
         await this.leads.markConversionUploaded(lead.id);
       }
-      return { ...lead, uploadSuccess: success, uploadDetail: detail };
+      // O detalhe bruto do erro (estrutura de conta, IDs internos do Google Ads)
+      // já foi logado no servidor por uploadOfflineConversion — pro cliente final
+      // só uma mensagem genérica, nunca a resposta crua da API do Google.
+      const uploadDetail = success
+        ? detail
+        : 'Não foi possível registrar a conversão no Google Ads. Nossa equipe foi notificada.';
+      return { ...lead, uploadSuccess: success, uploadDetail };
     }
 
     return { ...lead, uploadSuccess: false, uploadDetail: 'Lead sem GCLID — não veio de anúncio rastreado' };

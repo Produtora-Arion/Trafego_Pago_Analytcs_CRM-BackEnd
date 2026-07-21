@@ -738,15 +738,15 @@ export class GoogleAdsService implements OnModuleInit {
     );
 
     const result = await res.json() as any;
+    // Loga só o suficiente pra depurar sem gravar gclid/valor/payload bruto nos logs.
     if (!res.ok) {
-      console.error('[uploadConversion] Erro:', JSON.stringify(result));
+      console.error(`[uploadConversion] Falha na chamada à API do Google Ads (HTTP ${res.status})`);
       return { success: false, detail: JSON.stringify(result) };
     }
     if (result.partialFailureError) {
-      console.warn('[uploadConversion] Falha parcial:', JSON.stringify(result.partialFailureError));
+      console.warn('[uploadConversion] Falha parcial reportada pela API do Google Ads');
       return { success: false, detail: JSON.stringify(result.partialFailureError) };
     }
-    console.log('[uploadConversion] Sucesso:', JSON.stringify(result));
     return { success: true };
   }
 }
