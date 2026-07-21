@@ -106,4 +106,8 @@ export class Lead {
   /** Lembretes definidos manualmente — até 3 por lead. JSON: [{id, date, text}] */
   @Column({ nullable: true, type: 'text' })
   reminders: string;
+
+  /** Observações livres do vendedor sobre o lead */
+  @Column({ nullable: true, type: 'text' })
+  obs: string;
 }

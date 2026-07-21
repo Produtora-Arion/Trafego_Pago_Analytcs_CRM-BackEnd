@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import helmet from 'helmet';
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { McpService } from './mcp/mcp.service';
 
@@ -19,6 +20,12 @@ async function bootstrap() {
 
     // Headers de segurança (HSTS, anti-clickjacking, no-sniff, etc.)
     app.use(helmet());
+
+    // Valida e sanitiza o corpo de toda requisição contra os DTOs (class-validator).
+    // whitelist remove campos não declarados no DTO (fecha mass-assignment);
+    // rotas com @Body() tipado como `any`/objeto solto (webhooks) não são afetadas —
+    // o pipe só atua em parâmetros com um tipo de classe real.
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
     // CORS restrito às origens autorizadas (frontend). Nunca "*" com credenciais.
     const allowed = (process.env.FRONTEND_URL || 'http://localhost:3000')

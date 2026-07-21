@@ -1,33 +1,57 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { IsEmail, IsInt, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Lead, LeadStatus } from './lead.entity';
 
-export interface CreateLeadDto {
-  phone?: string;
-  email?: string;
-  name?: string;
-  gclid?: string;
-  fbclid?: string;
-  customerId?: string;
-  conversionActionId?: string;
-  firstMessage?: string;
-  formChoice?: string;
-  utmSource?: string;
-  utmMedium?: string;
-  utmCampaign?: string;
-  utmContent?: string;
-  utmTerm?: string;
-  landingPage?: string;
-  referrer?: string;
-  ip?: string;
-  userAgent?: string;
-  browserLanguage?: string;
-  sessionId?: string;
-  extraData?: string;
-  status?: LeadStatus;
+/**
+ * Classe (não interface) pra ganhar validação de verdade via class-validator
+ * na rota POST /leads. O webhook de formulário (lead-webhook.controller.ts)
+ * monta esse objeto internamente e chama o service direto — nunca passa pelo
+ * ValidationPipe — então continua tão flexível quanto antes pra campos livres.
+ */
+export class CreateLeadDto {
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsEmail() @MaxLength(255) email?: string;
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(200) gclid?: string;
+  @IsOptional() @IsString() @MaxLength(200) fbclid?: string;
+  @IsOptional() @IsString() customerId?: string;
+  @IsOptional() @IsString() conversionActionId?: string;
+  @IsOptional() @IsString() @MaxLength(4000) firstMessage?: string;
+  @IsOptional() @IsString() @MaxLength(500) formChoice?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmSource?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmMedium?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmCampaign?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmContent?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmTerm?: string;
+  @IsOptional() @IsString() @MaxLength(2000) landingPage?: string;
+  @IsOptional() @IsString() @MaxLength(2000) referrer?: string;
+  @IsOptional() @IsString() @MaxLength(100) ip?: string;
+  @IsOptional() @IsString() @MaxLength(500) userAgent?: string;
+  @IsOptional() @IsString() @MaxLength(50) browserLanguage?: string;
+  @IsOptional() @IsString() @MaxLength(200) sessionId?: string;
+  @IsOptional() @IsString() extraData?: string;
+  @IsOptional() @IsString() @MaxLength(80) status?: LeadStatus;
   /** Referência estável à etapa do CRM — fonte de verdade da coluna do lead */
-  stageId?: number;
+  @IsOptional() @IsInt() stageId?: number;
+}
+
+/** Edição manual no modal de rastreamento — mesmos campos da allowlist EDITABLE_FIELDS do service. */
+export class UpdateLeadFieldsDto {
+  [key: string]: unknown; // permite indexação por chave dinâmica em updateFields()
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsEmail() @MaxLength(255) email?: string;
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsString() @MaxLength(500) formChoice?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmSource?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmMedium?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmCampaign?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmContent?: string;
+  @IsOptional() @IsString() @MaxLength(200) utmTerm?: string;
+  @IsOptional() @IsString() extraData?: string;
+  @IsOptional() @IsNumber() conversionValue?: number;
+  @IsOptional() @IsString() @MaxLength(4000) obs?: string;
 }
 
 @Injectable()
@@ -40,6 +64,25 @@ export class LeadsService {
   async findAll(customerId?: string): Promise<Lead[]> {
     const where = customerId ? { customerId } : {};
     return this.repo.find({ where, order: { firstContactAt: 'DESC' } });
+  }
+
+  /** Quantos leads chegados no mês (YYYY-MM) estão hoje em cada etapa — agrupado por stageId. */
+  async getMonthlyFunnel(customerId: string, month: string): Promise<{ stageId: number | null; count: number }[]> {
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+
+    const rows = await this.repo
+      .createQueryBuilder('lead')
+      .select('lead.stageId', 'stageId')
+      .addSelect('COUNT(*)', 'count')
+      .where('lead.customerId = :customerId', { customerId })
+      .andWhere('lead.firstContactAt >= :start', { start })
+      .andWhere('lead.firstContactAt < :end', { end })
+      .groupBy('lead.stageId')
+      .getRawMany();
+
+    return rows.map((r) => ({ stageId: r.stageId !== null ? Number(r.stageId) : null, count: Number(r.count) }));
   }
 
   async findByPhone(phone: string): Promise<Lead | null> {
@@ -139,18 +182,14 @@ export class LeadsService {
     await this.repo.update(id, { conversionUploadedAt: new Date() });
   }
 
-  /** Campos editáveis manualmente pelo usuário no modal de rastreamento do lead */
+  /** Mesma lista de campos aceitos pela UpdateLeadFieldsDto — mantidas juntas de propósito */
   private static readonly EDITABLE_FIELDS = [
     'name', 'email', 'phone', 'formChoice',
     'utmSource', 'utmMedium', 'utmCampaign', 'utmContent', 'utmTerm',
-    'extraData', 'conversionValue',
+    'extraData', 'conversionValue', 'obs',
   ] as const;
 
-  async updateFields(
-    id: number,
-    fields: Partial<Record<typeof LeadsService.EDITABLE_FIELDS[number], any>>,
-    tenantId: string | null,
-  ): Promise<Lead> {
+  async updateFields(id: number, fields: UpdateLeadFieldsDto, tenantId: string | null): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
     for (const key of LeadsService.EDITABLE_FIELDS) {
       if (fields[key] !== undefined) (lead as any)[key] = fields[key];
