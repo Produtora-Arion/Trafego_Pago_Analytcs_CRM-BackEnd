@@ -10,11 +10,13 @@ import { LeadsModule } from './leads/leads.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { CrmStagesModule } from './crm-stages/crm-stages.module';
 import { WebhookConfigModule } from './webhook-config/webhook-config.module';
+import { LossReasonsModule } from './loss-reasons/loss-reasons.module';
 import { AuthModule } from './auth/auth.module';
 import { HealthController } from './health.controller';
 import { Lead } from './leads/lead.entity';
 import { CrmStage } from './crm-stages/crm-stage.entity';
 import { WebhookToken } from './webhook-config/webhook-token.entity';
+import { LossReason } from './loss-reasons/loss-reason.entity';
 
 @Module({
   imports: [
@@ -27,7 +29,7 @@ import { WebhookToken } from './webhook-config/webhook-token.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres' as const,
         url: config.get<string>('DATABASE_URL'),
-        entities: [Lead, CrmStage, WebhookToken],
+        entities: [Lead, CrmStage, WebhookToken, LossReason],
         // Schema gerenciado via SQL direto no Supabase — não usar synchronize
         synchronize: false,
         ssl: { rejectUnauthorized: false },
@@ -40,6 +42,7 @@ import { WebhookToken } from './webhook-config/webhook-token.entity';
     WhatsAppModule,
     CrmStagesModule,
     WebhookConfigModule,
+    LossReasonsModule,
     AuthModule,
   ],
   controllers: [HealthController],

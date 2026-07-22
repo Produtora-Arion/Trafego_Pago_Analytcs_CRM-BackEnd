@@ -182,6 +182,22 @@ export class LeadsService {
     await this.repo.update(id, { conversionUploadedAt: new Date() });
   }
 
+  /** Move o lead pra etapa fixa "Perdido", registrando o motivo escolhido. */
+  async markLost(
+    id: number,
+    stageId: number,
+    statusLabel: string,
+    lossReasonId: number,
+    tenantId: string | null,
+  ): Promise<Lead> {
+    const lead = await this.findScoped(id, tenantId);
+    lead.stageId = stageId;
+    lead.status = statusLabel;
+    lead.statusChangedAt = new Date();
+    lead.lossReasonId = lossReasonId;
+    return this.repo.save(lead);
+  }
+
   /** Mesma lista de campos aceitos pela UpdateLeadFieldsDto — mantidas juntas de propósito */
   private static readonly EDITABLE_FIELDS = [
     'name', 'email', 'phone', 'formChoice',

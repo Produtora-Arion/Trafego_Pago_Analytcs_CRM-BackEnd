@@ -1,5 +1,13 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
+/**
+ * 'won'/'lost' marcam as duas colunas fixas do funil (Ganho/Perdido) — nunca
+ * criadas/alteradas via API, só pela seed automática (ver DEFAULT_STAGES em
+ * crm-stages.service.ts) e pela migração que backfilled os clientes já existentes.
+ * 'default' é qualquer etapa normal, customizável livremente pelo cliente.
+ */
+export type StageKind = 'default' | 'won' | 'lost';
+
 @Entity('crm_stages')
 export class CrmStage {
   @PrimaryGeneratedColumn()
@@ -27,4 +35,7 @@ export class CrmStage {
   /** Código curto (6 chars, A-Z+dígitos) gerado uma vez na criação — identificador visível e imutável exibido na coluna. Nunca usado para lógica, só o `id` é a FK real. */
   @Column({ length: 6, nullable: true })
   code: string;
+
+  @Column({ default: 'default', type: 'varchar' })
+  kind: StageKind;
 }

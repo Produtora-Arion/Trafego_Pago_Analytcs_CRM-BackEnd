@@ -4,6 +4,7 @@ import { LeadsService, CreateLeadDto, UpdateLeadFieldsDto } from './leads.servic
 import { GoogleAdsService } from '../google-ads/google-ads.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
+import { LossReasonsService } from '../loss-reasons/loss-reasons.service';
 import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('leads')
@@ -14,6 +15,7 @@ export class LeadsController {
     private readonly googleAds: GoogleAdsService,
     private readonly crmStages: CrmStagesService,
     private readonly webhookConfig: WebhookConfigService,
+    private readonly lossReasons: LossReasonsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -96,6 +98,30 @@ export class LeadsController {
     const tenantId = this.tenant(req);
     const stage = await this.crmStages.findById(Number(stageId), tenantId);
     return this.leads.updateStage(Number(id), stage.id, stage.label, tenantId);
+  }
+
+  /**
+   * Move o lead pra etapa fixa "Perdido", exigindo um motivo pré-cadastrado
+   * (ativo e do próprio tenant). findById()/findById() garantem que tanto a
+   * etapa quanto o motivo pertencem ao cliente certo.
+   */
+  @Post(':id/lose')
+  async lose(
+    @Param('id') id: string,
+    @Body('stageId') stageId: number,
+    @Body('lossReasonId') lossReasonId: number,
+    @Req() req: any,
+  ) {
+    const tenantId = this.tenant(req);
+    if (!lossReasonId) throw new BadRequestException('lossReasonId é obrigatório');
+
+    const stage = await this.crmStages.findById(Number(stageId), tenantId);
+    if (stage.kind !== 'lost') throw new BadRequestException('A etapa informada não é a etapa fixa "Perdido"');
+
+    const reason = await this.lossReasons.findById(Number(lossReasonId), tenantId);
+    if (!reason.active) throw new BadRequestException('Este motivo está desativado — escolha outro');
+
+    return this.leads.markLost(Number(id), stage.id, stage.label, reason.id, tenantId);
   }
 
   @Post(':id/convert')

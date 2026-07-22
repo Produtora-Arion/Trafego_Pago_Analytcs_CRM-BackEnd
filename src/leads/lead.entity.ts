@@ -110,4 +110,8 @@ export class Lead {
   /** Observações livres do vendedor sobre o lead */
   @Column({ nullable: true, type: 'text' })
   obs: string;
+
+  /** Motivo da perda (LossReason.id) — só é setado ao mover o lead pra etapa fixa "Perdido". */
+  @Column({ nullable: true })
+  lossReasonId: number;
 }
