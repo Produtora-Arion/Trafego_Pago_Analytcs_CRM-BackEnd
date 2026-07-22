@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
 import { randomInt } from 'crypto';
@@ -16,10 +16,10 @@ function generateStageCode(): string {
 }
 
 const DEFAULT_STAGES = [
-  { label: 'Novo',           color: '#0ea5e9', position: 0, triggersConversion: false, isEntryStage: true  },
-  { label: 'Em Atendimento', color: '#f59e0b', position: 1, triggersConversion: false, isEntryStage: false },
-  { label: 'Convertido',     color: '#22c55e', position: 2, triggersConversion: true,  isEntryStage: false },
-  { label: 'Perdido',        color: '#ef4444', position: 3, triggersConversion: false, isEntryStage: false },
+  { label: 'Novo',           color: '#0ea5e9', position: 0, triggersConversion: false, isEntryStage: true,  kind: 'default' as const },
+  { label: 'Em Atendimento', color: '#f59e0b', position: 1, triggersConversion: false, isEntryStage: false, kind: 'default' as const },
+  { label: 'Ganho',          color: '#22c55e', position: 2, triggersConversion: true,  isEntryStage: false, kind: 'won' as const },
+  { label: 'Perdido',        color: '#ef4444', position: 3, triggersConversion: false, isEntryStage: false, kind: 'lost' as const },
 ];
 
 @Injectable()
@@ -43,6 +43,19 @@ export class CrmStagesService {
         DEFAULT_STAGES.map(s => this.stagesRepo.save(this.stagesRepo.create({ ...s, customerId, code: generateStageCode() }))),
       );
       return created.sort((a, b) => a.position - b.position);
+    }
+
+    // Auto-cura: cliente já tem etapas mas falta Ganho e/ou Perdido (ex: conta
+    // criada antes dessas colunas existirem) — cria só a(s) que faltam, no fim.
+    const missingKinds = (['won', 'lost'] as const).filter(k => !stages.some(s => s.kind === k));
+    if (missingKinds.length > 0) {
+      const maxPos = Math.max(...stages.map(s => s.position), -1);
+      const toCreate = missingKinds.map((k, i) => {
+        const def = DEFAULT_STAGES.find(s => s.kind === k)!;
+        return this.stagesRepo.create({ ...def, position: maxPos + 1 + i, customerId, code: generateStageCode() });
+      });
+      const created = await Promise.all(toCreate.map(s => this.stagesRepo.save(s)));
+      return [...stages, ...created].sort((a, b) => a.position - b.position);
     }
 
     return stages;
@@ -89,6 +102,21 @@ export class CrmStagesService {
     const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
+    // Ganho/Perdido são colunas fixas do funil: nome, disparo de conversão
+    // (sempre ligado em Ganho) e etapa de entrada não podem ser alterados.
+    // Cor continua livre — não faz diferença estrutural nenhuma.
+    if (stage.kind !== 'default') {
+      if (data.label !== undefined && data.label !== stage.label) {
+        throw new ForbiddenException('Esta etapa é fixa e não pode ser renomeada');
+      }
+      if (data.isEntryStage) {
+        throw new ForbiddenException('Esta etapa é fixa e não pode ser a etapa de entrada');
+      }
+      if (stage.kind === 'won' && data.triggersConversion === false) {
+        throw new ForbiddenException('A etapa Ganho sempre dispara a conversão — não é possível desativar');
+      }
+    }
+
     const labelChanged = data.label !== undefined && data.label !== stage.label;
 
     if (data.label !== undefined) stage.label = data.label;
@@ -128,6 +156,10 @@ export class CrmStagesService {
     const where = tenantId ? { id, customerId: tenantId } : { id };
     const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
+
+    if (stage.kind !== 'default') {
+      throw new ForbiddenException('Esta etapa é fixa e não pode ser excluída');
+    }
 
     // Nunca excluir uma etapa que ainda tem leads — força mover/excluir os leads antes.
     // Casa por stageId (imutável), não por nome.

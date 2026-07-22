@@ -5,6 +5,7 @@ import { LeadsService } from './leads.service';
 import { GoogleAdsService } from '../google-ads/google-ads.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
+import { LossReasonsService } from '../loss-reasons/loss-reasons.service';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 
 /**
@@ -39,6 +40,7 @@ describe('LeadsController — isolamento multi-tenant', () => {
         { provide: GoogleAdsService, useValue: {} },
         { provide: CrmStagesService, useValue: {} },
         { provide: WebhookConfigService, useValue: {} },
+        { provide: LossReasonsService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     })
