@@ -149,12 +149,18 @@ export class LeadsService {
     return lead;
   }
 
-  /** Move o lead para outra etapa. stageId é a fonte de verdade; status (label) só acompanha para exibição. */
+  /**
+   * Move o lead para outra etapa. stageId é a fonte de verdade; status (label)
+   * só acompanha para exibição. O motivo de perda só faz sentido enquanto o
+   * lead está na etapa fixa "Perdido" — sair dela desatribui o motivo (esta
+   * rota nunca move PARA "Perdido", isso é sempre via markLost()).
+   */
   async updateStage(id: number, stageId: number, label: string, tenantId: string | null): Promise<Lead> {
     const lead = await this.findScoped(id, tenantId);
     lead.stageId = stageId;
     lead.status = label;
     lead.statusChangedAt = new Date();
+    lead.lossReasonId = null;
     return this.repo.save(lead);
   }
 
@@ -173,6 +179,7 @@ export class LeadsService {
     lead.statusChangedAt = new Date();
     lead.convertedAt = new Date();
     lead.conversionValue = value;
+    lead.lossReasonId = null; // saiu de "Perdido" (ou nunca esteve) — motivo não se aplica mais
     if (customerId) lead.customerId = customerId;
     if (conversionActionId) lead.conversionActionId = conversionActionId;
     return this.repo.save(lead);
