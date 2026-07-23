@@ -52,6 +52,15 @@ export class GoogleAdsController {
     return this.googleAds.listAdGroups(customerId, campaignId, period);
   }
 
+  @Get(':customerId/campaigns/:campaignId/ads')
+  listAds(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Query('period') period = 'LAST_7_DAYS',
+  ) {
+    return this.googleAds.listAds(customerId, campaignId, period);
+  }
+
   @Get(':customerId/keywords')
   getKeywords(
     @Param('customerId') customerId: string,

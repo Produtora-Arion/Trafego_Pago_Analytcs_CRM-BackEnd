@@ -307,6 +307,55 @@ export class GoogleAdsService implements OnModuleInit {
     }));
   }
 
+  /**
+   * Anúncios (criativos) de uma campanha — título/descrições, status, URL final e métricas.
+   * status/tipo vêm como código numérico bruto da API (mesmo padrão de listAdGroups/getCampaigns
+   * já existente) — a decodificação pra rótulo em português acontece no frontend.
+   */
+  async listAds(customerId: string, campaignId: string, dateRange = 'LAST_7_DAYS') {
+    const customer = this.getCustomer(customerId);
+
+    const rows = await customer.query(`
+      SELECT
+        ad_group_ad.ad.id,
+        ad_group_ad.ad.type,
+        ad_group_ad.status,
+        ad_group_ad.ad.final_urls,
+        ad_group_ad.ad.responsive_search_ad.headlines,
+        ad_group_ad.ad.responsive_search_ad.descriptions,
+        ad_group.id,
+        ad_group.name,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.ctr,
+        metrics.conversions
+      FROM ad_group_ad
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
+        AND ad_group_ad.status != 'REMOVED'
+        AND segments.date ${this.buildDateFilter(dateRange)}
+      ORDER BY metrics.cost_micros DESC
+    `);
+
+    return rows.map((r) => {
+      const ad = r.ad_group_ad?.ad as any;
+      return {
+        id: String(ad?.id ?? ''),
+        tipo: ad?.type,
+        status: r.ad_group_ad?.status,
+        grupo_anuncio: r.ad_group?.name ?? '',
+        url_final: ad?.final_urls?.[0] ?? null,
+        titulos: (ad?.responsive_search_ad?.headlines ?? []).map((h: any) => h.text),
+        descricoes: (ad?.responsive_search_ad?.descriptions ?? []).map((d: any) => d.text),
+        impressoes: Number(r.metrics.impressions),
+        cliques: Number(r.metrics.clicks),
+        custo: `R$ ${(Number(r.metrics.cost_micros) / 1_000_000).toFixed(2)}`,
+        ctr: `${(Number(r.metrics.ctr) * 100).toFixed(2)}%`,
+        conversoes: Number(r.metrics.conversions),
+      };
+    });
+  }
+
   async getKeywordPerformance(
     customerId: string,
     campaignId?: string,
