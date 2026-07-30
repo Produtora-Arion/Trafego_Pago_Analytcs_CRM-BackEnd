@@ -16,6 +16,7 @@ import { HealthController } from './health.controller';
 import { Lead } from './leads/lead.entity';
 import { CrmStage } from './crm-stages/crm-stage.entity';
 import { WebhookToken } from './webhook-config/webhook-token.entity';
+import { PageViewDaily } from './webhook-config/page-view-daily.entity';
 import { LossReason } from './loss-reasons/loss-reason.entity';
 
 @Module({
@@ -29,7 +30,7 @@ import { LossReason } from './loss-reasons/loss-reason.entity';
       useFactory: (config: ConfigService) => ({
         type: 'postgres' as const,
         url: config.get<string>('DATABASE_URL'),
-        entities: [Lead, CrmStage, WebhookToken, LossReason],
+        entities: [Lead, CrmStage, WebhookToken, PageViewDaily, LossReason],
         // Schema gerenciado via SQL direto no Supabase — não usar synchronize
         synchronize: false,
         ssl: { rejectUnauthorized: false },

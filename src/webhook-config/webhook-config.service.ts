@@ -3,6 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { WebhookToken } from './webhook-token.entity';
+import { PageViewDaily } from './page-view-daily.entity';
+
+/** yyyy-MM-dd em horário de Brasília, independente do timezone do servidor. */
+function todayBrasilia(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
 
 function removeAccents(str: string): string {
   return Array.from(str).map(c => {
@@ -30,6 +36,8 @@ export class WebhookConfigService {
   constructor(
     @InjectRepository(WebhookToken)
     private readonly repo: Repository<WebhookToken>,
+    @InjectRepository(PageViewDaily)
+    private readonly pageViewRepo: Repository<PageViewDaily>,
   ) {}
 
   private generateToken(): string {
@@ -111,5 +119,34 @@ export class WebhookConfigService {
       conversionActionId,
     });
     return this.repo.save(entry);
+  }
+
+  /** Chamado pelo endpoint público — incrementa o contador de acessos de hoje pra esse slug. */
+  async recordPageView(slug: string): Promise<boolean> {
+    const customerId = await this.validateSlug(slug);
+    if (!customerId) return false;
+
+    await this.pageViewRepo.query(
+      `INSERT INTO page_view_daily ("customerId", date, count)
+       VALUES ($1, $2, 1)
+       ON CONFLICT ("customerId", date) DO UPDATE SET count = page_view_daily.count + 1`,
+      [customerId, todayBrasilia()],
+    );
+    return true;
+  }
+
+  async getPageViewStats(
+    customerId: string,
+    from?: string,
+    to?: string,
+  ): Promise<{ date: string; count: number }[]> {
+    const qb = this.pageViewRepo
+      .createQueryBuilder('pv')
+      .where('pv.customerId = :customerId', { customerId })
+      .orderBy('pv.date', 'ASC');
+    if (from) qb.andWhere('pv.date >= :from', { from });
+    if (to) qb.andWhere('pv.date <= :to', { to });
+    const rows = await qb.getMany();
+    return rows.map(r => ({ date: r.date, count: r.count }));
   }
 }

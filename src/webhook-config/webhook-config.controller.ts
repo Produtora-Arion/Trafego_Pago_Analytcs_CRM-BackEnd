@@ -38,4 +38,14 @@ export class WebhookConfigController {
   ) {
     return this.service.updateConversionActionId(customerId, conversionActionId);
   }
+
+  /** Acessos da LP por dia, no período informado (ou todo o histórico se omitido). */
+  @Get(':customerId/pageviews')
+  getPageViews(
+    @Param('customerId') customerId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getPageViewStats(customerId, from, to);
+  }
 }
