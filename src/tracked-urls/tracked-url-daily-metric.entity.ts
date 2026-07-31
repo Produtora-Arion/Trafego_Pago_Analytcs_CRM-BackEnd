@@ -1,6 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
-/** Contagem diária de acessos e envios de formulário de uma tracked_url. */
+/** Contagem diária de acessos (totais) e cliques de uma tracked_url. */
 @Entity('tracked_url_daily_metric')
 @Index(['trackedUrlId', 'date'], { unique: true })
 export class TrackedUrlDailyMetric {
@@ -18,5 +18,5 @@ export class TrackedUrlDailyMetric {
   accessCount: number;
 
   @Column({ default: 0 })
-  formCount: number;
+  clickCount: number;
 }

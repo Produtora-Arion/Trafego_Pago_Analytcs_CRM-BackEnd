@@ -21,6 +21,8 @@ import { PageViewDaily } from './webhook-config/page-view-daily.entity';
 import { LossReason } from './loss-reasons/loss-reason.entity';
 import { TrackedUrl } from './tracked-urls/tracked-url.entity';
 import { TrackedUrlDailyMetric } from './tracked-urls/tracked-url-daily-metric.entity';
+import { TrackedUrlVisitor } from './tracked-urls/tracked-url-visitor.entity';
+import { TrackedUrlFormSubmission } from './tracked-urls/tracked-url-form-submission.entity';
 
 @Module({
   imports: [
@@ -33,7 +35,10 @@ import { TrackedUrlDailyMetric } from './tracked-urls/tracked-url-daily-metric.e
       useFactory: (config: ConfigService) => ({
         type: 'postgres' as const,
         url: config.get<string>('DATABASE_URL'),
-        entities: [Lead, CrmStage, WebhookToken, PageViewDaily, LossReason, TrackedUrl, TrackedUrlDailyMetric],
+        entities: [
+          Lead, CrmStage, WebhookToken, PageViewDaily, LossReason,
+          TrackedUrl, TrackedUrlDailyMetric, TrackedUrlVisitor, TrackedUrlFormSubmission,
+        ],
         // Schema gerenciado via SQL direto no Supabase — não usar synchronize
         synchronize: false,
         ssl: { rejectUnauthorized: false },

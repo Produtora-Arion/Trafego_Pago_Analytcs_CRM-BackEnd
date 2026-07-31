@@ -37,4 +37,13 @@ export class TrackedUrlsController {
   ) {
     return this.service.getMetrics(Number(id), from, to);
   }
+
+  @Get(':id/submissions')
+  getSubmissions(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getSubmissions(Number(id), from, to);
+  }
 }
