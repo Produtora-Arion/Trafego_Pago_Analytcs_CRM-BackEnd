@@ -30,9 +30,16 @@ export class TrackedUrlsTrackController {
   // Máx. 120 hits por minuto por IP — cobre acesso (a cada pageload) e clique.
   @Throttle({ default: { limit: 120, ttl: 60000 } })
   @Get(':slug/access')
-  async access(@Param('slug') slug: string, @Query('vid') vid: string | undefined, @Res() res: Response) {
+  async access(
+    @Param('slug') slug: string,
+    @Query('vid') vid: string | undefined,
+    @Query('utm_source') utmSource: string | undefined,
+    @Query('utm_medium') utmMedium: string | undefined,
+    @Query('utm_campaign') utmCampaign: string | undefined,
+    @Res() res: Response,
+  ) {
     this.cors(res);
-    await this.service.recordAccess(slug, vid);
+    await this.service.recordAccess(slug, vid, utmSource, utmMedium, utmCampaign);
     // Sempre 204 — não dá pra um script externo saber se o slug é válido.
     return res.status(204).send();
   }

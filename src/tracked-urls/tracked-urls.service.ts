@@ -4,12 +4,14 @@ import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { TrackedUrl } from './tracked-url.entity';
 import { TrackedUrlDailyMetric } from './tracked-url-daily-metric.entity';
-import { TrackedUrlVisitor } from './tracked-url-visitor.entity';
+import { TrackedUrlAccessEvent } from './tracked-url-access-event.entity';
 import { TrackedUrlFormSubmission } from './tracked-url-form-submission.entity';
 import { UpdateTrackedUrlDto } from './tracked-urls.dto';
 
 const MAX_VISITOR_ID_LEN = 100;
+const MAX_UTM_LEN = 150;
 const MAX_FORM_DATA_LEN = 10_000;
+const DIRECT_LABEL = '(direto)';
 
 function todayBrasilia(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
@@ -29,6 +31,11 @@ function removeAccents(str: string): string {
   }).join('');
 }
 
+function cleanUtm(v?: string): string | null {
+  const t = v?.trim().slice(0, MAX_UTM_LEN);
+  return t ? t : null;
+}
+
 export type TrackedUrlWithTotals = TrackedUrl & {
   totalAccess: number;
   totalUnique: number;
@@ -44,6 +51,14 @@ export type TrackedUrlMetricDay = {
   formCount: number;
 };
 
+export type TrackedUrlUtmRow = {
+  source: string;
+  medium: string;
+  campaign: string;
+  totalAccess: number;
+  uniqueAccess: number;
+};
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -51,8 +66,8 @@ export class TrackedUrlsService {
     private readonly repo: Repository<TrackedUrl>,
     @InjectRepository(TrackedUrlDailyMetric)
     private readonly metricRepo: Repository<TrackedUrlDailyMetric>,
-    @InjectRepository(TrackedUrlVisitor)
-    private readonly visitorRepo: Repository<TrackedUrlVisitor>,
+    @InjectRepository(TrackedUrlAccessEvent)
+    private readonly accessRepo: Repository<TrackedUrlAccessEvent>,
     @InjectRepository(TrackedUrlFormSubmission)
     private readonly submissionRepo: Repository<TrackedUrlFormSubmission>,
   ) {}
@@ -76,19 +91,19 @@ export class TrackedUrlsService {
     const urls = await this.repo.find({ order: { createdAt: 'DESC' } });
     if (urls.length === 0) return [];
 
-    const [accessClick, uniques, forms] = await Promise.all([
+    const [access, clicks, forms] = await Promise.all([
+      this.accessRepo
+        .createQueryBuilder('a')
+        .select('a.trackedUrlId', 'trackedUrlId')
+        .addSelect('COUNT(*)', 'totalAccess')
+        .addSelect('COUNT(DISTINCT a.visitorId)', 'totalUnique')
+        .groupBy('a.trackedUrlId')
+        .getRawMany(),
       this.metricRepo
         .createQueryBuilder('m')
         .select('m.trackedUrlId', 'trackedUrlId')
-        .addSelect('SUM(m.accessCount)', 'totalAccess')
         .addSelect('SUM(m.clickCount)', 'totalClick')
         .groupBy('m.trackedUrlId')
-        .getRawMany(),
-      this.visitorRepo
-        .createQueryBuilder('v')
-        .select('v.trackedUrlId', 'trackedUrlId')
-        .addSelect('COUNT(*)', 'totalUnique')
-        .groupBy('v.trackedUrlId')
         .getRawMany(),
       this.submissionRepo
         .createQueryBuilder('s')
@@ -97,15 +112,15 @@ export class TrackedUrlsService {
         .groupBy('s.trackedUrlId')
         .getRawMany(),
     ]);
-    const acMap = new Map(accessClick.map(r => [Number(r.trackedUrlId), r]));
-    const uMap = new Map(uniques.map(r => [Number(r.trackedUrlId), r]));
+    const aMap = new Map(access.map(r => [Number(r.trackedUrlId), r]));
+    const cMap = new Map(clicks.map(r => [Number(r.trackedUrlId), r]));
     const fMap = new Map(forms.map(r => [Number(r.trackedUrlId), r]));
 
     return urls.map(u => ({
       ...u,
-      totalAccess: Number(acMap.get(u.id)?.totalAccess ?? 0),
-      totalClick: Number(acMap.get(u.id)?.totalClick ?? 0),
-      totalUnique: Number(uMap.get(u.id)?.totalUnique ?? 0),
+      totalAccess: Number(aMap.get(u.id)?.totalAccess ?? 0),
+      totalUnique: Number(aMap.get(u.id)?.totalUnique ?? 0),
+      totalClick: Number(cMap.get(u.id)?.totalClick ?? 0),
       totalForm: Number(fMap.get(u.id)?.totalForm ?? 0),
     }));
   }
@@ -119,7 +134,7 @@ export class TrackedUrlsService {
 
   async delete(id: number): Promise<{ success: boolean }> {
     await this.metricRepo.delete({ trackedUrlId: id });
-    await this.visitorRepo.delete({ trackedUrlId: id });
+    await this.accessRepo.delete({ trackedUrlId: id });
     await this.submissionRepo.delete({ trackedUrlId: id });
     await this.repo.delete({ id });
     return { success: true };
@@ -129,28 +144,27 @@ export class TrackedUrlsService {
     return this.repo.findOne({ where: { slug, active: true } });
   }
 
-  /** Pageview — sempre soma no total do dia; se vier visitorId, também registra pro contador de únicos. */
-  async recordAccess(slug: string, visitorId?: string): Promise<boolean> {
+  /** Pageview — grava um evento por acesso (não dedupa na escrita; "único" é calculado na leitura). */
+  async recordAccess(
+    slug: string,
+    visitorId: string | undefined,
+    utmSource?: string,
+    utmMedium?: string,
+    utmCampaign?: string,
+  ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
 
-    const date = todayBrasilia();
-    await this.metricRepo.query(
-      `INSERT INTO tracked_url_daily_metric ("trackedUrlId", date, "accessCount")
-       VALUES ($1, $2, 1)
-       ON CONFLICT ("trackedUrlId", date) DO UPDATE SET "accessCount" = tracked_url_daily_metric."accessCount" + 1`,
-      [entry.id, date],
-    );
-
-    const vid = visitorId?.trim().slice(0, MAX_VISITOR_ID_LEN);
-    if (vid) {
-      await this.visitorRepo.query(
-        `INSERT INTO tracked_url_visitor ("trackedUrlId", date, "visitorId")
-         VALUES ($1, $2, $3)
-         ON CONFLICT ("trackedUrlId", date, "visitorId") DO NOTHING`,
-        [entry.id, date, vid],
-      );
-    }
+    const vid = visitorId?.trim().slice(0, MAX_VISITOR_ID_LEN) || 'sem-id';
+    const event = this.accessRepo.create({
+      trackedUrlId: entry.id,
+      date: todayBrasilia(),
+      visitorId: vid,
+      utmSource: cleanUtm(utmSource),
+      utmMedium: cleanUtm(utmMedium),
+      utmCampaign: cleanUtm(utmCampaign),
+    });
+    await this.accessRepo.save(event);
     return true;
   }
 
@@ -192,24 +206,26 @@ export class TrackedUrlsService {
       return d;
     };
 
-    const dailyQb = this.metricRepo.createQueryBuilder('m').where('m.trackedUrlId = :id', { id });
-    if (from) dailyQb.andWhere('m.date >= :from', { from });
-    if (to) dailyQb.andWhere('m.date <= :to', { to });
-    for (const r of await dailyQb.getMany()) {
+    const accessQb = this.accessRepo
+      .createQueryBuilder('a')
+      .select('a.date', 'date')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(DISTINCT a.visitorId)', 'unique')
+      .where('a.trackedUrlId = :id', { id })
+      .groupBy('a.date');
+    if (from) accessQb.andWhere('a.date >= :from', { from });
+    if (to) accessQb.andWhere('a.date <= :to', { to });
+    for (const r of await accessQb.getRawMany()) {
       const d = ensure(r.date);
-      d.accessCount = r.accessCount;
-      d.clickCount = r.clickCount;
+      d.accessCount = Number(r.total);
+      d.uniqueCount = Number(r.unique);
     }
 
-    const uniqueQb = this.visitorRepo
-      .createQueryBuilder('v')
-      .select('v.date', 'date').addSelect('COUNT(*)', 'count')
-      .where('v.trackedUrlId = :id', { id })
-      .groupBy('v.date');
-    if (from) uniqueQb.andWhere('v.date >= :from', { from });
-    if (to) uniqueQb.andWhere('v.date <= :to', { to });
-    for (const r of await uniqueQb.getRawMany()) {
-      ensure(r.date).uniqueCount = Number(r.count);
+    const clickQb = this.metricRepo.createQueryBuilder('m').where('m.trackedUrlId = :id', { id });
+    if (from) clickQb.andWhere('m.date >= :from', { from });
+    if (to) clickQb.andWhere('m.date <= :to', { to });
+    for (const r of await clickQb.getMany()) {
+      ensure(r.date).clickCount = r.clickCount;
     }
 
     const formQb = this.submissionRepo
@@ -224,6 +240,32 @@ export class TrackedUrlsService {
     }
 
     return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /** Breakdown de acessos por UTM (source/medium/campaign) — total e único, no período. */
+  async getUtmBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlUtmRow[]> {
+    const qb = this.accessRepo
+      .createQueryBuilder('a')
+      .select('a.utmSource', 'source')
+      .addSelect('a.utmMedium', 'medium')
+      .addSelect('a.utmCampaign', 'campaign')
+      .addSelect('COUNT(*)', 'totalAccess')
+      .addSelect('COUNT(DISTINCT a.visitorId)', 'uniqueAccess')
+      .where('a.trackedUrlId = :id', { id })
+      .groupBy('a.utmSource')
+      .addGroupBy('a.utmMedium')
+      .addGroupBy('a.utmCampaign')
+      .orderBy('"totalAccess"', 'DESC');
+    if (from) qb.andWhere('a.date >= :from', { from });
+    if (to) qb.andWhere('a.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({
+      source: r.source ?? DIRECT_LABEL,
+      medium: r.medium ?? DIRECT_LABEL,
+      campaign: r.campaign ?? DIRECT_LABEL,
+      totalAccess: Number(r.totalAccess),
+      uniqueAccess: Number(r.uniqueAccess),
+    }));
   }
 
   async getSubmissions(id: number, from?: string, to?: string): Promise<{ id: number; data: any; createdAt: Date }[]> {
