@@ -391,6 +391,7 @@ export class GoogleAdsService implements OnModuleInit {
       customer.query(`
         SELECT
           ad_group_criterion.keyword.text,
+          ad_group_criterion.keyword.match_type,
           campaign.id,
           ad_group.name,
           metrics.impressions,
@@ -407,15 +408,18 @@ export class GoogleAdsService implements OnModuleInit {
       `),
     ]);
 
-    // Cria mapa de métricas por "campanha|grupo|keyword"
+    // Cria mapa de métricas por "campanha|grupo|keyword|tipo de correspondência" —
+    // precisa incluir o match_type porque duas keywords podem ter o MESMO texto
+    // com correspondências diferentes (ex: "termo" em Ampla e em Frase); sem isso
+    // uma sobrescrevia a métrica da outra e a conversão real sumia da tela.
     const metricsMap = new Map<string, (typeof metricRows)[0]>();
     for (const r of metricRows) {
-      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}`;
+      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}|${r.ad_group_criterion?.keyword?.match_type}`;
       metricsMap.set(key, r);
     }
 
     return kwRows.map((r) => {
-      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}`;
+      const key = `${r.campaign?.id}|${r.ad_group?.name}|${r.ad_group_criterion?.keyword?.text}|${r.ad_group_criterion?.keyword?.match_type}`;
       const m = metricsMap.get(key);
       return {
         palavra_chave: r.ad_group_criterion.keyword.text,
