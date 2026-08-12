@@ -7,6 +7,7 @@ import { TrackedUrlsService } from './tracked-urls.service';
  * Endpoints públicos chamados pelo snippet colado na página monitorada:
  *   GET  /t/{slug}/access?vid=...    → pageview (vid = id anônimo do visitante, opcional)
  *   GET  /t/{slug}/click?label=...   → clique num botão/CTA (label identifica qual botão)
+ *   GET  /t/{slug}/view?label=...    → botão apareceu na tela (impressão) — mesmo label do clique
  *   POST /t/{slug}/form              → envio de formulário, body = dados do formulário
  */
 @Controller('t')
@@ -53,6 +54,20 @@ export class TrackedUrlsTrackController {
   ) {
     this.cors(res);
     await this.service.recordClick(slug, label);
+    return res.status(204).send();
+  }
+
+  // Impressão do botão — pode disparar uma vez por botão visível na tela, então
+  // usa o mesmo limite generoso do acesso.
+  @Throttle({ default: { limit: 120, ttl: 60000 } })
+  @Get(':slug/view')
+  async view(
+    @Param('slug') slug: string,
+    @Query('label') label: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.cors(res);
+    await this.service.recordView(slug, label);
     return res.status(204).send();
   }
 
