@@ -59,6 +59,16 @@ export type TrackedUrlUtmRow = {
   uniqueAccess: number;
 };
 
+export type TrackedUrlUtmDayRow = {
+  date: string;
+  source: string;
+  totalAccess: number;
+};
+
+function titleCase(s: string): string {
+  return s.replace(/\b\w/g, c => c.toUpperCase());
+}
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -265,6 +275,31 @@ export class TrackedUrlsService {
       campaign: r.campaign ?? DIRECT_LABEL,
       totalAccess: Number(r.totalAccess),
       uniqueAccess: Number(r.uniqueAccess),
+    }));
+  }
+
+  /**
+   * Acessos por dia, quebrado por origem — pra ver se são os anúncios (UTM) que estão
+   * trazendo acesso ou se é tráfego direto. Agrupa por origem normalizada (minúsculo/sem
+   * espaço nas pontas) pra não espalhar "Google"/"google"/"Googlee" em fatias separadas.
+   */
+  async getUtmBreakdownByDay(id: number, from?: string, to?: string): Promise<TrackedUrlUtmDayRow[]> {
+    const qb = this.accessRepo
+      .createQueryBuilder('a')
+      .select('a.date', 'date')
+      .addSelect(`LOWER(TRIM(COALESCE(a."utmSource", '${DIRECT_LABEL}')))`, 'sourceKey')
+      .addSelect('COUNT(*)', 'totalAccess')
+      .where('a.trackedUrlId = :id', { id })
+      .groupBy('a.date')
+      .addGroupBy('"sourceKey"')
+      .orderBy('a.date', 'ASC');
+    if (from) qb.andWhere('a.date >= :from', { from });
+    if (to) qb.andWhere('a.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({
+      date: r.date,
+      source: r.sourceKey === DIRECT_LABEL ? DIRECT_LABEL : titleCase(r.sourceKey),
+      totalAccess: Number(r.totalAccess),
     }));
   }
 
