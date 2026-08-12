@@ -55,4 +55,13 @@ export class TrackedUrlsController {
   ) {
     return this.service.getUtmBreakdown(Number(id), from, to);
   }
+
+  @Get(':id/utm-daily')
+  getUtmBreakdownByDay(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getUtmBreakdownByDay(Number(id), from, to);
+  }
 }
