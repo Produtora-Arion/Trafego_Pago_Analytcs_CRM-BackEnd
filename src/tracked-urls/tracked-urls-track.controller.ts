@@ -5,9 +5,9 @@ import { TrackedUrlsService } from './tracked-urls.service';
 
 /**
  * Endpoints públicos chamados pelo snippet colado na página monitorada:
- *   GET  /t/{slug}/access?vid=...   → pageview (vid = id anônimo do visitante, opcional)
- *   GET  /t/{slug}/click            → clique num botão/CTA
- *   POST /t/{slug}/form             → envio de formulário, body = dados do formulário
+ *   GET  /t/{slug}/access?vid=...    → pageview (vid = id anônimo do visitante, opcional)
+ *   GET  /t/{slug}/click?label=...   → clique num botão/CTA (label identifica qual botão)
+ *   POST /t/{slug}/form              → envio de formulário, body = dados do formulário
  */
 @Controller('t')
 export class TrackedUrlsTrackController {
@@ -46,9 +46,13 @@ export class TrackedUrlsTrackController {
 
   @Throttle({ default: { limit: 120, ttl: 60000 } })
   @Get(':slug/click')
-  async click(@Param('slug') slug: string, @Res() res: Response) {
+  async click(
+    @Param('slug') slug: string,
+    @Query('label') label: string | undefined,
+    @Res() res: Response,
+  ) {
     this.cors(res);
-    await this.service.recordClick(slug);
+    await this.service.recordClick(slug, label);
     return res.status(204).send();
   }
 
