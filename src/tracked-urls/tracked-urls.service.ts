@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { TrackedUrl } from './tracked-url.entity';
 import { TrackedUrlAccessEvent } from './tracked-url-access-event.entity';
-import { TrackedUrlClickEvent } from './tracked-url-click-event.entity';
+import { TrackedUrlButtonEvent } from './tracked-url-button-event.entity';
 import { TrackedUrlFormSubmission } from './tracked-url-form-submission.entity';
 import { UpdateTrackedUrlDto } from './tracked-urls.dto';
 
@@ -13,7 +13,7 @@ const MAX_UTM_LEN = 150;
 const MAX_LABEL_LEN = 80;
 const MAX_FORM_DATA_LEN = 10_000;
 const DIRECT_LABEL = '(direto)';
-const DEFAULT_CLICK_LABEL = 'clique';
+const DEFAULT_BUTTON_LABEL = 'clique';
 
 function todayBrasilia(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
@@ -46,6 +46,7 @@ export type TrackedUrlWithTotals = TrackedUrl & {
   totalAccess: number;
   totalUnique: number;
   totalClick: number;
+  totalView: number;
   totalForm: number;
 };
 
@@ -80,6 +81,17 @@ export type TrackedUrlClickDayRow = {
   totalClick: number;
 };
 
+export type TrackedUrlViewRow = {
+  label: string;
+  totalView: number;
+};
+
+export type TrackedUrlViewDayRow = {
+  date: string;
+  label: string;
+  totalView: number;
+};
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -87,8 +99,8 @@ export class TrackedUrlsService {
     private readonly repo: Repository<TrackedUrl>,
     @InjectRepository(TrackedUrlAccessEvent)
     private readonly accessRepo: Repository<TrackedUrlAccessEvent>,
-    @InjectRepository(TrackedUrlClickEvent)
-    private readonly clickRepo: Repository<TrackedUrlClickEvent>,
+    @InjectRepository(TrackedUrlButtonEvent)
+    private readonly buttonRepo: Repository<TrackedUrlButtonEvent>,
     @InjectRepository(TrackedUrlFormSubmission)
     private readonly submissionRepo: Repository<TrackedUrlFormSubmission>,
   ) {}
@@ -112,7 +124,7 @@ export class TrackedUrlsService {
     const urls = await this.repo.find({ order: { createdAt: 'DESC' } });
     if (urls.length === 0) return [];
 
-    const [access, clicks, forms] = await Promise.all([
+    const [access, clicks, views, forms] = await Promise.all([
       this.accessRepo
         .createQueryBuilder('a')
         .select('a.trackedUrlId', 'trackedUrlId')
@@ -120,11 +132,19 @@ export class TrackedUrlsService {
         .addSelect('COUNT(DISTINCT a.visitorId)', 'totalUnique')
         .groupBy('a.trackedUrlId')
         .getRawMany(),
-      this.clickRepo
-        .createQueryBuilder('c')
-        .select('c.trackedUrlId', 'trackedUrlId')
+      this.buttonRepo
+        .createQueryBuilder('b')
+        .select('b.trackedUrlId', 'trackedUrlId')
         .addSelect('COUNT(*)', 'totalClick')
-        .groupBy('c.trackedUrlId')
+        .where(`b.type = 'click'`)
+        .groupBy('b.trackedUrlId')
+        .getRawMany(),
+      this.buttonRepo
+        .createQueryBuilder('b')
+        .select('b.trackedUrlId', 'trackedUrlId')
+        .addSelect('COUNT(*)', 'totalView')
+        .where(`b.type = 'view'`)
+        .groupBy('b.trackedUrlId')
         .getRawMany(),
       this.submissionRepo
         .createQueryBuilder('s')
@@ -135,6 +155,7 @@ export class TrackedUrlsService {
     ]);
     const aMap = new Map(access.map(r => [Number(r.trackedUrlId), r]));
     const cMap = new Map(clicks.map(r => [Number(r.trackedUrlId), r]));
+    const vMap = new Map(views.map(r => [Number(r.trackedUrlId), r]));
     const fMap = new Map(forms.map(r => [Number(r.trackedUrlId), r]));
 
     return urls.map(u => ({
@@ -142,6 +163,7 @@ export class TrackedUrlsService {
       totalAccess: Number(aMap.get(u.id)?.totalAccess ?? 0),
       totalUnique: Number(aMap.get(u.id)?.totalUnique ?? 0),
       totalClick: Number(cMap.get(u.id)?.totalClick ?? 0),
+      totalView: Number(vMap.get(u.id)?.totalView ?? 0),
       totalForm: Number(fMap.get(u.id)?.totalForm ?? 0),
     }));
   }
@@ -155,7 +177,7 @@ export class TrackedUrlsService {
 
   async delete(id: number): Promise<{ success: boolean }> {
     await this.accessRepo.delete({ trackedUrlId: id });
-    await this.clickRepo.delete({ trackedUrlId: id });
+    await this.buttonRepo.delete({ trackedUrlId: id });
     await this.submissionRepo.delete({ trackedUrlId: id });
     await this.repo.delete({ id });
     return { success: true };
@@ -191,16 +213,26 @@ export class TrackedUrlsService {
 
   /** Clique num botão/CTA — label identifica QUAL botão (ex: "whatsapp", "agendar"). */
   async recordClick(slug: string, label?: string): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'click', label);
+  }
+
+  /** Botão apareceu na tela da pessoa (impressão) — mesmo label do clique, pra dar CTR. */
+  async recordView(slug: string, label?: string): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'view', label);
+  }
+
+  private async recordButtonEvent(slug: string, type: 'click' | 'view', label?: string): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
 
-    const cleanLabel = label?.trim().slice(0, MAX_LABEL_LEN) || DEFAULT_CLICK_LABEL;
-    const event = this.clickRepo.create({
+    const cleanLabel = label?.trim().slice(0, MAX_LABEL_LEN) || DEFAULT_BUTTON_LABEL;
+    const event = this.buttonRepo.create({
       trackedUrlId: entry.id,
       date: todayBrasilia(),
       label: cleanLabel,
+      type,
     });
-    await this.clickRepo.save(event);
+    await this.buttonRepo.save(event);
     return true;
   }
 
@@ -289,34 +321,58 @@ export class TrackedUrlsService {
 
   /** Total de cliques por botão (label), no período. */
   async getClickBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlClickRow[]> {
-    const qb = this.clickRepo
-      .createQueryBuilder('c')
-      .select(`LOWER(TRIM(c.label))`, 'labelKey')
-      .addSelect('COUNT(*)', 'totalClick')
-      .where('c.trackedUrlId = :id', { id })
-      .groupBy('"labelKey"')
-      .orderBy('"totalClick"', 'DESC');
-    if (from) qb.andWhere('c.date >= :from', { from });
-    if (to) qb.andWhere('c.date <= :to', { to });
-    const rows = await qb.getRawMany();
-    return rows.map(r => ({ label: titleCase(r.labelKey), totalClick: Number(r.totalClick) }));
+    const rows = await this.buttonBreakdown(id, 'click', from, to);
+    return rows.map(r => ({ label: r.label, totalClick: r.total }));
   }
 
   /** Cliques por dia, quebrado por botão — pra ver qual CTA está performando melhor dia a dia. */
   async getClickBreakdownByDay(id: number, from?: string, to?: string): Promise<TrackedUrlClickDayRow[]> {
-    const qb = this.clickRepo
-      .createQueryBuilder('c')
-      .select('c.date', 'date')
-      .addSelect(`LOWER(TRIM(c.label))`, 'labelKey')
-      .addSelect('COUNT(*)', 'totalClick')
-      .where('c.trackedUrlId = :id', { id })
-      .groupBy('c.date')
-      .addGroupBy('"labelKey"')
-      .orderBy('c.date', 'ASC');
-    if (from) qb.andWhere('c.date >= :from', { from });
-    if (to) qb.andWhere('c.date <= :to', { to });
+    const rows = await this.buttonBreakdownByDay(id, 'click', from, to);
+    return rows.map(r => ({ date: r.date, label: r.label, totalClick: r.total }));
+  }
+
+  /** Total de visualizações (o botão apareceu na tela) por botão, no período. */
+  async getViewBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlViewRow[]> {
+    const rows = await this.buttonBreakdown(id, 'view', from, to);
+    return rows.map(r => ({ label: r.label, totalView: r.total }));
+  }
+
+  /** Visualizações por dia, quebrado por botão. */
+  async getViewBreakdownByDay(id: number, from?: string, to?: string): Promise<TrackedUrlViewDayRow[]> {
+    const rows = await this.buttonBreakdownByDay(id, 'view', from, to);
+    return rows.map(r => ({ date: r.date, label: r.label, totalView: r.total }));
+  }
+
+  private async buttonBreakdown(id: number, type: 'click' | 'view', from?: string, to?: string) {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect('COUNT(*)', 'total')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere('b.type = :type', { type })
+      .groupBy('"labelKey"')
+      .orderBy('"total"', 'DESC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
     const rows = await qb.getRawMany();
-    return rows.map(r => ({ date: r.date, label: titleCase(r.labelKey), totalClick: Number(r.totalClick) }));
+    return rows.map(r => ({ label: titleCase(r.labelKey), total: Number(r.total) }));
+  }
+
+  private async buttonBreakdownByDay(id: number, type: 'click' | 'view', from?: string, to?: string) {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select('b.date', 'date')
+      .addSelect(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect('COUNT(*)', 'total')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere('b.type = :type', { type })
+      .groupBy('b.date')
+      .addGroupBy('"labelKey"')
+      .orderBy('b.date', 'ASC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({ date: r.date, label: titleCase(r.labelKey), total: Number(r.total) }));
   }
 
   async getSubmissions(id: number, from?: string, to?: string): Promise<{ id: number; data: any; createdAt: Date }[]> {

@@ -21,7 +21,7 @@ import { PageViewDaily } from './webhook-config/page-view-daily.entity';
 import { LossReason } from './loss-reasons/loss-reason.entity';
 import { TrackedUrl } from './tracked-urls/tracked-url.entity';
 import { TrackedUrlAccessEvent } from './tracked-urls/tracked-url-access-event.entity';
-import { TrackedUrlClickEvent } from './tracked-urls/tracked-url-click-event.entity';
+import { TrackedUrlButtonEvent } from './tracked-urls/tracked-url-button-event.entity';
 import { TrackedUrlFormSubmission } from './tracked-urls/tracked-url-form-submission.entity';
 
 @Module({
@@ -37,7 +37,7 @@ import { TrackedUrlFormSubmission } from './tracked-urls/tracked-url-form-submis
         url: config.get<string>('DATABASE_URL'),
         entities: [
           Lead, CrmStage, WebhookToken, PageViewDaily, LossReason,
-          TrackedUrl, TrackedUrlAccessEvent, TrackedUrlClickEvent, TrackedUrlFormSubmission,
+          TrackedUrl, TrackedUrlAccessEvent, TrackedUrlButtonEvent, TrackedUrlFormSubmission,
         ],
         // Schema gerenciado via SQL direto no Supabase — não usar synchronize
         synchronize: false,

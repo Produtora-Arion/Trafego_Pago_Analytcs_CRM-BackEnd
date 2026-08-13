@@ -1,9 +1,12 @@
 import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 
-/** Um clique registrado — o "label" identifica QUAL botão foi clicado (ex: "whatsapp", "agendar"). */
-@Entity('tracked_url_click_event')
+/**
+ * Um evento de botão — "click" (a pessoa clicou) ou "view" (o botão apareceu na
+ * tela dela). O "label" identifica QUAL botão (ex: "whatsapp", "agendar").
+ */
+@Entity('tracked_url_button_event')
 @Index(['trackedUrlId', 'date'])
-export class TrackedUrlClickEvent {
+export class TrackedUrlButtonEvent {
   @PrimaryGeneratedColumn()
   id: number;
 
@@ -17,4 +20,8 @@ export class TrackedUrlClickEvent {
   /** Nome do botão/CTA, definido pelo próprio site na chamada do pixel (ex: "whatsapp"). */
   @Column({ type: 'varchar' })
   label: string;
+
+  /** 'click' | 'view' */
+  @Column({ type: 'varchar' })
+  type: string;
 }
