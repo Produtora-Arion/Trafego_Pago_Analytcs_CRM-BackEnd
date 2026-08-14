@@ -84,12 +84,13 @@ export type TrackedUrlClickDayRow = {
 export type TrackedUrlViewRow = {
   label: string;
   totalView: number;
+  uniqueView: number;
 };
 
-export type TrackedUrlViewDayRow = {
+export type TrackedUrlViewMetricDay = {
   date: string;
-  label: string;
-  totalView: number;
+  viewCount: number;
+  uniqueViewCount: number;
 };
 
 @Injectable()
@@ -212,25 +213,27 @@ export class TrackedUrlsService {
   }
 
   /** Clique num botão/CTA — label identifica QUAL botão (ex: "whatsapp", "agendar"). */
-  async recordClick(slug: string, label?: string): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'click', label);
+  async recordClick(slug: string, label?: string, visitorId?: string): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'click', label, visitorId);
   }
 
-  /** Botão apareceu na tela da pessoa (impressão) — mesmo label do clique, pra dar CTR. */
-  async recordView(slug: string, label?: string): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'view', label);
+  /** Botão apareceu na tela da pessoa (impressão) — mesmo label/visitorId do clique, pra dar CTR e único. */
+  async recordView(slug: string, label?: string, visitorId?: string): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'view', label, visitorId);
   }
 
-  private async recordButtonEvent(slug: string, type: 'click' | 'view', label?: string): Promise<boolean> {
+  private async recordButtonEvent(slug: string, type: 'click' | 'view', label?: string, visitorId?: string): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
 
     const cleanLabel = label?.trim().slice(0, MAX_LABEL_LEN) || DEFAULT_BUTTON_LABEL;
+    const vid = visitorId?.trim().slice(0, MAX_VISITOR_ID_LEN) || 'sem-id';
     const event = this.buttonRepo.create({
       trackedUrlId: entry.id,
       date: todayBrasilia(),
       label: cleanLabel,
       type,
+      visitorId: vid,
     });
     await this.buttonRepo.save(event);
     return true;
@@ -331,16 +334,38 @@ export class TrackedUrlsService {
     return rows.map(r => ({ date: r.date, label: r.label, totalClick: r.total }));
   }
 
-  /** Total de visualizações (o botão apareceu na tela) por botão, no período. */
+  /** Total (e único) de visualizações — o botão apareceu na tela — por botão, no período. */
   async getViewBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlViewRow[]> {
-    const rows = await this.buttonBreakdown(id, 'view', from, to);
-    return rows.map(r => ({ label: r.label, totalView: r.total }));
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'view'`)
+      .groupBy('"labelKey"')
+      .orderBy('"total"', 'DESC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({ label: titleCase(r.labelKey), totalView: Number(r.total), uniqueView: Number(r.unique) }));
   }
 
-  /** Visualizações por dia, quebrado por botão. */
-  async getViewBreakdownByDay(id: number, from?: string, to?: string): Promise<TrackedUrlViewDayRow[]> {
-    const rows = await this.buttonBreakdownByDay(id, 'view', from, to);
-    return rows.map(r => ({ date: r.date, label: r.label, totalView: r.total }));
+  /** Visualizações por dia, agregado de todos os botões — total e único, no mesmo formato do getMetrics. */
+  async getViewMetrics(id: number, from?: string, to?: string): Promise<TrackedUrlViewMetricDay[]> {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select('b.date', 'date')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'view'`)
+      .groupBy('b.date')
+      .orderBy('b.date', 'ASC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({ date: r.date, viewCount: Number(r.total), uniqueViewCount: Number(r.unique) }));
   }
 
   private async buttonBreakdown(id: number, type: 'click' | 'view', from?: string, to?: string) {

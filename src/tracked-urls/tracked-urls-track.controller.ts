@@ -7,7 +7,7 @@ import { TrackedUrlsService } from './tracked-urls.service';
  * Endpoints públicos chamados pelo snippet colado na página monitorada:
  *   GET  /t/{slug}/access?vid=...    → pageview (vid = id anônimo do visitante, opcional)
  *   GET  /t/{slug}/click?label=...   → clique num botão/CTA (label identifica qual botão)
- *   GET  /t/{slug}/view?label=...    → botão apareceu na tela (impressão) — mesmo label do clique
+ *   GET  /t/{slug}/view?label=...&vid=...  → botão apareceu na tela (impressão) — mesmo label/vid do clique
  *   POST /t/{slug}/form              → envio de formulário, body = dados do formulário
  */
 @Controller('t')
@@ -64,10 +64,11 @@ export class TrackedUrlsTrackController {
   async view(
     @Param('slug') slug: string,
     @Query('label') label: string | undefined,
+    @Query('vid') vid: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordView(slug, label);
+    await this.service.recordView(slug, label, vid);
     return res.status(204).send();
   }
 

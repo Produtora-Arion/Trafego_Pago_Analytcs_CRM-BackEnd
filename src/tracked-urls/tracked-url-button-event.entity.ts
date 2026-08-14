@@ -24,4 +24,8 @@ export class TrackedUrlButtonEvent {
   /** 'click' | 'view' */
   @Column({ type: 'varchar' })
   type: string;
+
+  /** Id anônimo do visitante (localStorage) — usado pra contar visualizações únicas. */
+  @Column({ type: 'varchar' })
+  visitorId: string;
 }
