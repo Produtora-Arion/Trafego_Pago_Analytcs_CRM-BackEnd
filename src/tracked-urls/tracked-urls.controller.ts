@@ -92,12 +92,12 @@ export class TrackedUrlsController {
     return this.service.getViewBreakdown(Number(id), from, to);
   }
 
-  @Get(':id/views-daily')
-  getViewBreakdownByDay(
+  @Get(':id/views-metrics')
+  getViewMetrics(
     @Param('id') id: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.service.getViewBreakdownByDay(Number(id), from, to);
+    return this.service.getViewMetrics(Number(id), from, to);
   }
 }
