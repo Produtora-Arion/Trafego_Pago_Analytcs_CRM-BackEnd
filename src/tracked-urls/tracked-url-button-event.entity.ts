@@ -28,4 +28,20 @@ export class TrackedUrlButtonEvent {
   /** Id anônimo do visitante (localStorage) — usado pra contar visualizações únicas. */
   @Column({ type: 'varchar' })
   visitorId: string;
+
+  /** Posição do elemento entre os `[data-track]` da página no momento do evento — usada
+   * só pra ordenar os botões no relatório na mesma ordem em que aparecem no site. */
+  @Column({ type: 'int', nullable: true })
+  pos: number | null;
+
+  /** UTM da URL no momento do clique/visualização — mesma origem que já é capturada no
+   * acesso, mas aqui por botão: mostra qual campanha/anúncio gerou aquele clique/view. */
+  @Column({ type: 'varchar', nullable: true })
+  utmSource: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  utmMedium: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  utmCampaign: string | null;
 }
