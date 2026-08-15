@@ -23,6 +23,11 @@ export class TrackedUrlsTrackController {
   private cors(res: Response) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-store');
+    // O helmet() global do main.ts manda "Cross-Origin-Resource-Policy: same-origin"
+    // por padrão em toda resposta — isso faz o navegador BLOQUEAR o pixel/pings quando
+    // o site que chama é de outro domínio (é sempre o caso aqui). Sobrescreve só nessas
+    // rotas públicas, sem afetar a proteção padrão do resto da API.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 
   /**
@@ -146,6 +151,9 @@ export class TrackedUrlsTrackController {
 `;
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    // Sem isso o navegador BLOQUEIA a própria tag <script src> quando o site que
+    // carrega é de outro domínio (sempre é) — ver comentário em cors() acima.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     // Cache curto — atualizações no script (ex: melhorias de rastreio) chegam
     // aos sites em poucos minutos, sem o cliente precisar fazer nada.
     res.setHeader('Cache-Control', 'public, max-age=300');
@@ -158,6 +166,7 @@ export class TrackedUrlsTrackController {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.status(204).send();
   }
 
