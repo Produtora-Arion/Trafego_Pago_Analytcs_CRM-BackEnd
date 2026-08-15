@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Options, Param, Post, Query, Res } from '@nestjs/common';
+import { Controller, Get, Options, Param, Post, Body, Query, Req, Res } from '@nestjs/common';
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { TrackedUrlsService } from './tracked-urls.service';
 
 /**
- * Endpoints públicos chamados pelo snippet colado na página monitorada:
+ * Endpoints públicos chamados pela página monitorada:
+ *   GET  /t/{slug}/pixel.js          → script único que instala tudo sozinho (recomendado)
  *   GET  /t/{slug}/access?vid=...    → pageview (vid = id anônimo do visitante, opcional)
  *   GET  /t/{slug}/click?label=...   → clique num botão/CTA (label identifica qual botão)
  *   GET  /t/{slug}/view?label=...&vid=...  → botão apareceu na tela (impressão) — mesmo label/vid do clique
@@ -17,6 +18,107 @@ export class TrackedUrlsTrackController {
   private cors(res: Response) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-store');
+  }
+
+  /**
+   * Script único e auto-atualizável — o cliente cola UMA VEZ no site
+   * (<script src=".../t/{slug}/pixel.js" async>) e nunca mais precisa mexer:
+   * qualquer melhoria na lógica de rastreio (ex: captura de UTM) passa a valer
+   * sozinha na próxima visita, sem precisar copiar/colar código de novo.
+   *
+   * Cobre sozinho: acesso (com UTM e único) + clique/visualização de qualquer
+   * elemento marcado com `data-track="nome-do-botao"` no HTML — delegação de
+   * evento pra clique (funciona mesmo em botões renderizados depois pelo
+   * React) e IntersectionObserver + MutationObserver pra visualização.
+   */
+  @SkipThrottle()
+  @Get(':slug/pixel.js')
+  pixelScript(@Param('slug') slug: string, @Req() req: Request, @Res() res: Response) {
+    const base = `${req.protocol}://${req.get('host')}`;
+    const safeSlug = JSON.stringify(slug);
+    const script = `(function () {
+  var BASE = ${JSON.stringify(base)};
+  var SLUG = ${safeSlug};
+  var VID_KEY = 'arion_vid';
+
+  function getVisitorId() {
+    try {
+      var vid = localStorage.getItem(VID_KEY);
+      if (!vid) {
+        vid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).slice(2));
+        localStorage.setItem(VID_KEY, vid);
+      }
+      return vid;
+    } catch (e) { return 'sem-id'; }
+  }
+
+  function ping(path, params) {
+    var q = new URLSearchParams(params || {});
+    fetch(BASE + '/t/' + SLUG + '/' + path + '?' + q.toString(), { keepalive: true }).catch(function () {});
+  }
+
+  function trackAccess() {
+    var url = new URLSearchParams(window.location.search);
+    var params = { vid: getVisitorId() };
+    ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function (k) {
+      var v = url.get(k);
+      if (v) params[k] = v;
+    });
+    ping('access', params);
+  }
+
+  function trackClick(label) { ping('click', { label: label }); }
+  function trackView(label) { ping('view', { label: label, vid: getVisitorId() }); }
+
+  // Clique automático em qualquer elemento com data-track — delegação no
+  // document, então funciona mesmo em botões que o React ainda vai renderizar.
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-track]') : null;
+    if (el) trackClick(el.getAttribute('data-track'));
+  }, true);
+
+  // Visualização automática — observa elementos com data-track, conta só na
+  // primeira vez que cada um entra na tela.
+  var seen = {};
+  var io = ('IntersectionObserver' in window) ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (!entry.isIntersecting) return;
+      var label = entry.target.getAttribute('data-track');
+      if (label && !seen[label]) {
+        seen[label] = true;
+        trackView(label);
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.5 }) : null;
+
+  function scan() {
+    if (!io) return;
+    document.querySelectorAll('[data-track]').forEach(function (el) { io.observe(el); });
+  }
+
+  function start() { trackAccess(); scan(); }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+  // Sites em React/Next.js podem renderizar os botões um instante depois —
+  // observa o DOM pra pegar quem apareceu depois do primeiro scan.
+  if ('MutationObserver' in window) {
+    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // Pra quem quiser chamar na mão também (ex: onClick customizado).
+  window.arionTrack = { click: trackClick, view: trackView };
+})();
+`;
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    // Cache curto — atualizações no script (ex: melhorias de rastreio) chegam
+    // aos sites em poucos minutos, sem o cliente precisar fazer nada.
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.status(200).send(script);
   }
 
   @SkipThrottle()
