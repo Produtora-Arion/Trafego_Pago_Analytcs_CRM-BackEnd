@@ -6,10 +6,15 @@ import { TrackedUrlsService } from './tracked-urls.service';
 /**
  * Endpoints públicos chamados pela página monitorada:
  *   GET  /t/{slug}/pixel.js          → script único que instala tudo sozinho (recomendado)
- *   GET  /t/{slug}/access?vid=...    → pageview (vid = id anônimo do visitante, opcional)
- *   GET  /t/{slug}/click?label=...   → clique num botão/CTA (label identifica qual botão)
- *   GET  /t/{slug}/view?label=...&vid=...  → botão apareceu na tela (impressão) — mesmo label/vid do clique
+ *   GET  /t/{slug}/access?vid=...&utm_source=...&utm_medium=...&utm_campaign=...  → pageview
+ *   GET  /t/{slug}/click?label=...&vid=...&pos=...&utm_source=...  → clique num botão/CTA
+ *   GET  /t/{slug}/view?label=...&vid=...&pos=...&utm_source=...   → botão apareceu na tela (impressão)
  *   POST /t/{slug}/form              → envio de formulário, body = dados do formulário
+ *
+ * `pos` = posição do botão entre os elementos [data-track] da página (pro relatório listar
+ * os botões na ordem em que aparecem no site). `utm_*` em click/view = mesma UTM do acesso,
+ * capturada de novo no momento do clique/visualização — dá pra saber qual campanha/anúncio
+ * gerou aquele clique ou visualização específica, não só o acesso.
  */
 @Controller('t')
 export class TrackedUrlsTrackController {
@@ -57,24 +62,50 @@ export class TrackedUrlsTrackController {
     fetch(BASE + '/t/' + SLUG + '/' + path + '?' + q.toString(), { keepalive: true }).catch(function () {});
   }
 
-  function trackAccess() {
+  // UTM atual da URL — usada no acesso E em clique/visualização, pra saber
+  // exatamente qual campanha/anúncio gerou aquele clique ou aquela visualização.
+  function getUtms() {
     var url = new URLSearchParams(window.location.search);
-    var params = { vid: getVisitorId() };
+    var out = {};
     ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function (k) {
       var v = url.get(k);
-      if (v) params[k] = v;
+      if (v) out[k] = v;
     });
+    return out;
+  }
+
+  // Posição do elemento entre os [data-track] da página — só pra listar os
+  // botões no relatório na mesma ordem em que aparecem no site.
+  function elPos(el) {
+    var all = document.querySelectorAll('[data-track]');
+    var idx = Array.prototype.indexOf.call(all, el);
+    return idx >= 0 ? idx : undefined;
+  }
+
+  function trackAccess() {
+    var params = Object.assign({ vid: getVisitorId() }, getUtms());
     ping('access', params);
   }
 
-  function trackClick(label) { ping('click', { label: label }); }
-  function trackView(label) { ping('view', { label: label, vid: getVisitorId() }); }
+  function trackClick(label, el) {
+    var params = Object.assign({ label: label, vid: getVisitorId() }, getUtms());
+    var pos = el ? elPos(el) : undefined;
+    if (pos !== undefined) params.pos = pos;
+    ping('click', params);
+  }
+
+  function trackView(label, el) {
+    var params = Object.assign({ label: label, vid: getVisitorId() }, getUtms());
+    var pos = el ? elPos(el) : undefined;
+    if (pos !== undefined) params.pos = pos;
+    ping('view', params);
+  }
 
   // Clique automático em qualquer elemento com data-track — delegação no
   // document, então funciona mesmo em botões que o React ainda vai renderizar.
   document.addEventListener('click', function (e) {
     var el = e.target && e.target.closest ? e.target.closest('[data-track]') : null;
-    if (el) trackClick(el.getAttribute('data-track'));
+    if (el) trackClick(el.getAttribute('data-track'), el);
   }, true);
 
   // Visualização automática — observa elementos com data-track, conta só na
@@ -86,7 +117,7 @@ export class TrackedUrlsTrackController {
       var label = entry.target.getAttribute('data-track');
       if (label && !seen[label]) {
         seen[label] = true;
-        trackView(label);
+        trackView(label, entry.target);
         io.unobserve(entry.target);
       }
     });
@@ -152,10 +183,15 @@ export class TrackedUrlsTrackController {
   async click(
     @Param('slug') slug: string,
     @Query('label') label: string | undefined,
+    @Query('vid') vid: string | undefined,
+    @Query('pos') pos: string | undefined,
+    @Query('utm_source') utmSource: string | undefined,
+    @Query('utm_medium') utmMedium: string | undefined,
+    @Query('utm_campaign') utmCampaign: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordClick(slug, label);
+    await this.service.recordClick(slug, label, vid, pos, utmSource, utmMedium, utmCampaign);
     return res.status(204).send();
   }
 
@@ -167,10 +203,14 @@ export class TrackedUrlsTrackController {
     @Param('slug') slug: string,
     @Query('label') label: string | undefined,
     @Query('vid') vid: string | undefined,
+    @Query('pos') pos: string | undefined,
+    @Query('utm_source') utmSource: string | undefined,
+    @Query('utm_medium') utmMedium: string | undefined,
+    @Query('utm_campaign') utmCampaign: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordView(slug, label, vid);
+    await this.service.recordView(slug, label, vid, pos, utmSource, utmMedium, utmCampaign);
     return res.status(204).send();
   }
 

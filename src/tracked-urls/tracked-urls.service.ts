@@ -93,6 +93,16 @@ export type TrackedUrlViewMetricDay = {
   uniqueViewCount: number;
 };
 
+/** Cliques ou visualizações agrupados por UTM (não por botão) — pra saber qual
+ * campanha/anúncio está gerando mais clique ou mais visualização de botão. */
+export type TrackedUrlButtonUtmRow = {
+  source: string;
+  medium: string;
+  campaign: string;
+  total: number;
+  unique: number;
+};
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -213,27 +223,43 @@ export class TrackedUrlsService {
   }
 
   /** Clique num botão/CTA — label identifica QUAL botão (ex: "whatsapp", "agendar"). */
-  async recordClick(slug: string, label?: string, visitorId?: string): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'click', label, visitorId);
+  async recordClick(
+    slug: string, label?: string, visitorId?: string, pos?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+  ): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'click', label, visitorId, pos, utmSource, utmMedium, utmCampaign);
   }
 
   /** Botão apareceu na tela da pessoa (impressão) — mesmo label/visitorId do clique, pra dar CTR e único. */
-  async recordView(slug: string, label?: string, visitorId?: string): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'view', label, visitorId);
+  async recordView(
+    slug: string, label?: string, visitorId?: string, pos?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+  ): Promise<boolean> {
+    return this.recordButtonEvent(slug, 'view', label, visitorId, pos, utmSource, utmMedium, utmCampaign);
   }
 
-  private async recordButtonEvent(slug: string, type: 'click' | 'view', label?: string, visitorId?: string): Promise<boolean> {
+  private async recordButtonEvent(
+    slug: string, type: 'click' | 'view', label?: string, visitorId?: string, pos?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+  ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
 
     const cleanLabel = label?.trim().slice(0, MAX_LABEL_LEN) || DEFAULT_BUTTON_LABEL;
     const vid = visitorId?.trim().slice(0, MAX_VISITOR_ID_LEN) || 'sem-id';
+    const posNum = pos !== undefined && pos !== '' && Number.isFinite(Number(pos))
+      ? Math.max(0, Math.min(9999, Math.trunc(Number(pos))))
+      : null;
     const event = this.buttonRepo.create({
       trackedUrlId: entry.id,
       date: todayBrasilia(),
       label: cleanLabel,
       type,
       visitorId: vid,
+      pos: posNum,
+      utmSource: cleanUtm(utmSource),
+      utmMedium: cleanUtm(utmMedium),
+      utmCampaign: cleanUtm(utmCampaign),
     });
     await this.buttonRepo.save(event);
     return true;
@@ -341,10 +367,14 @@ export class TrackedUrlsService {
       .select(`LOWER(TRIM(b.label))`, 'labelKey')
       .addSelect('COUNT(*)', 'total')
       .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
+      .addSelect('MIN(b.pos)', 'pos')
       .where('b.trackedUrlId = :id', { id })
       .andWhere(`b.type = 'view'`)
       .groupBy('"labelKey"')
-      .orderBy('"total"', 'DESC');
+      // Ordem da página primeiro (quem não tem "pos" — dado antigo — vai pro final,
+      // ordenado por popularidade como antes).
+      .orderBy('"pos"', 'ASC', 'NULLS LAST')
+      .addOrderBy('"total"', 'DESC');
     if (from) qb.andWhere('b.date >= :from', { from });
     if (to) qb.andWhere('b.date <= :to', { to });
     const rows = await qb.getRawMany();
@@ -368,15 +398,54 @@ export class TrackedUrlsService {
     return rows.map(r => ({ date: r.date, viewCount: Number(r.total), uniqueViewCount: Number(r.unique) }));
   }
 
+  /** Cliques agrupados por UTM (origem/mídia/campanha) — qual anúncio está gerando mais clique. */
+  async getClickBreakdownByUtm(id: number, from?: string, to?: string): Promise<TrackedUrlButtonUtmRow[]> {
+    return this.buttonUtmBreakdown(id, 'click', from, to);
+  }
+
+  /** Visualizações de botão agrupadas por UTM — complementa o clique: mostra se o anúncio
+   * traz gente que VÊ o botão mesmo sem clicar, útil pra separar "página fraca" de "anúncio fraco". */
+  async getViewBreakdownByUtm(id: number, from?: string, to?: string): Promise<TrackedUrlButtonUtmRow[]> {
+    return this.buttonUtmBreakdown(id, 'view', from, to);
+  }
+
+  private async buttonUtmBreakdown(id: number, type: 'click' | 'view', from?: string, to?: string): Promise<TrackedUrlButtonUtmRow[]> {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select('b.utmSource', 'source')
+      .addSelect('b.utmMedium', 'medium')
+      .addSelect('b.utmCampaign', 'campaign')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere('b.type = :type', { type })
+      .groupBy('b.utmSource')
+      .addGroupBy('b.utmMedium')
+      .addGroupBy('b.utmCampaign')
+      .orderBy('"total"', 'DESC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({
+      source: r.source ?? DIRECT_LABEL,
+      medium: r.medium ?? DIRECT_LABEL,
+      campaign: r.campaign ?? DIRECT_LABEL,
+      total: Number(r.total),
+      unique: Number(r.unique),
+    }));
+  }
+
   private async buttonBreakdown(id: number, type: 'click' | 'view', from?: string, to?: string) {
     const qb = this.buttonRepo
       .createQueryBuilder('b')
       .select(`LOWER(TRIM(b.label))`, 'labelKey')
       .addSelect('COUNT(*)', 'total')
+      .addSelect('MIN(b.pos)', 'pos')
       .where('b.trackedUrlId = :id', { id })
       .andWhere('b.type = :type', { type })
       .groupBy('"labelKey"')
-      .orderBy('"total"', 'DESC');
+      .orderBy('"pos"', 'ASC', 'NULLS LAST')
+      .addOrderBy('"total"', 'DESC');
     if (from) qb.andWhere('b.date >= :from', { from });
     if (to) qb.andWhere('b.date <= :to', { to });
     const rows = await qb.getRawMany();

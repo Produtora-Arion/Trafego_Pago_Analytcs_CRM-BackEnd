@@ -100,4 +100,22 @@ export class TrackedUrlsController {
   ) {
     return this.service.getViewMetrics(Number(id), from, to);
   }
+
+  @Get(':id/clicks-utm')
+  getClickBreakdownByUtm(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getClickBreakdownByUtm(Number(id), from, to);
+  }
+
+  @Get(':id/views-utm')
+  getViewBreakdownByUtm(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getViewBreakdownByUtm(Number(id), from, to);
+  }
 }
