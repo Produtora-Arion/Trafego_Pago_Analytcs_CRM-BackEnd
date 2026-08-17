@@ -118,4 +118,23 @@ export class TrackedUrlsController {
   ) {
     return this.service.getViewBreakdownByUtm(Number(id), from, to);
   }
+
+  @Get(':id/funnel')
+  getFunnel(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getFunnel(Number(id), from, to);
+  }
+
+  @Get(':id/button-matrix')
+  getButtonMatrix(
+    @Param('id') id: string,
+    @Query('type') type: 'click' | 'view' = 'click',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getButtonMatrix(Number(id), type === 'view' ? 'view' : 'click', from, to);
+  }
 }
