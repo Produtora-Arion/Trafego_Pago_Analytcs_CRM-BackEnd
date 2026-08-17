@@ -103,6 +103,22 @@ export type TrackedUrlButtonUtmRow = {
   unique: number;
 };
 
+/** Pessoas únicas em cada estágio, no período — não é soma de dias (uma mesma
+ * pessoa que volta em dias diferentes conta uma vez só). Base pro funil. */
+export type TrackedUrlFunnel = {
+  accessUnique: number;
+  viewUnique: number;
+  clickUnique: number;
+};
+
+/** Uma célula do cruzamento botão × origem — quantos clique/view daquele botão
+ * vieram de cada UTM (fonte normalizada, igual ao gráfico de acesso por dia). */
+export type TrackedUrlButtonMatrixCell = {
+  label: string;
+  source: string;
+  total: number;
+};
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -396,6 +412,68 @@ export class TrackedUrlsService {
     if (to) qb.andWhere('b.date <= :to', { to });
     const rows = await qb.getRawMany();
     return rows.map(r => ({ date: r.date, viewCount: Number(r.total), uniqueViewCount: Number(r.unique) }));
+  }
+
+  /**
+   * Quantas pessoas ÚNICAS chegaram em cada estágio no período — a base do funil
+   * "Acessou → Viu algum botão → Clicou em algum botão". Não é soma de
+   * uniqueAccess/uniqueView por dia (uma mesma pessoa que volta em dois dias
+   * diferentes só pode contar uma vez no funil do período inteiro).
+   */
+  async getFunnel(id: number, from?: string, to?: string): Promise<TrackedUrlFunnel> {
+    const accessQb = this.accessRepo.createQueryBuilder('a')
+      .select('COUNT(DISTINCT a.visitorId)', 'c')
+      .where('a.trackedUrlId = :id', { id });
+    if (from) accessQb.andWhere('a.date >= :from', { from });
+    if (to) accessQb.andWhere('a.date <= :to', { to });
+
+    const viewQb = this.buttonRepo.createQueryBuilder('b')
+      .select('COUNT(DISTINCT b.visitorId)', 'c')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'view'`);
+    if (from) viewQb.andWhere('b.date >= :from', { from });
+    if (to) viewQb.andWhere('b.date <= :to', { to });
+
+    const clickQb = this.buttonRepo.createQueryBuilder('b')
+      .select('COUNT(DISTINCT b.visitorId)', 'c')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'click'`);
+    if (from) clickQb.andWhere('b.date >= :from', { from });
+    if (to) clickQb.andWhere('b.date <= :to', { to });
+
+    const [a, v, c] = await Promise.all([accessQb.getRawOne(), viewQb.getRawOne(), clickQb.getRawOne()]);
+    return {
+      accessUnique: Number(a?.c ?? 0),
+      viewUnique: Number(v?.c ?? 0),
+      clickUnique: Number(c?.c ?? 0),
+    };
+  }
+
+  /**
+   * Cruzamento botão × origem — quantos clique (ou visualização) de cada botão
+   * vieram de cada UTM, pra ver exatamente qual campanha empurra qual botão
+   * (não só "qual botão é mais clicado" e "qual UTM clica mais" separados).
+   * Origem normalizada (minúsculo/sem espaço nas pontas), igual ao gráfico de
+   * acesso por dia — evita "Instagram"/"instagram" virarem colunas diferentes.
+   */
+  async getButtonMatrix(id: number, type: 'click' | 'view', from?: string, to?: string): Promise<TrackedUrlButtonMatrixCell[]> {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect(`LOWER(TRIM(COALESCE(b.utmSource, '${DIRECT_LABEL}')))`, 'sourceKey')
+      .addSelect('COUNT(*)', 'total')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere('b.type = :type', { type })
+      .groupBy('"labelKey"')
+      .addGroupBy('"sourceKey"');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows.map(r => ({
+      label: titleCase(r.labelKey),
+      source: r.sourceKey === DIRECT_LABEL ? DIRECT_LABEL : titleCase(r.sourceKey),
+      total: Number(r.total),
+    }));
   }
 
   /** Cliques agrupados por UTM (origem/mídia/campanha) — qual anúncio está gerando mais clique. */
