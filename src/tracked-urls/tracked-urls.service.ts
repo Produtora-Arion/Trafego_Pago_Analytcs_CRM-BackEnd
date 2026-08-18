@@ -119,6 +119,14 @@ export type TrackedUrlButtonMatrixCell = {
   total: number;
 };
 
+/** Quantas vezes (e quantas pessoas únicas) rolaram a página até esse marco de
+ * profundidade (25/50/75/95%) — base do funil de rolagem. */
+export type TrackedUrlScrollRow = {
+  depth: number;
+  total: number;
+  unique: number;
+};
+
 @Injectable()
 export class TrackedUrlsService {
   constructor(
@@ -254,8 +262,22 @@ export class TrackedUrlsService {
     return this.recordButtonEvent(slug, 'view', label, visitorId, pos, utmSource, utmMedium, utmCampaign);
   }
 
+  /**
+   * A pessoa rolou até X% da página (25/50/75/95) — reaproveita a mesma tabela de
+   * evento de botão (o "label" vira a profundidade, ex: "25"). Cada marco dispara
+   * só uma vez por carregamento de página, então quem chega em 95% também gerou os
+   * eventos de 25/50/75 — dá pra contar único por marco e montar um funil de rolagem.
+   */
+  async recordScroll(
+    slug: string, depth: number, visitorId?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+  ): Promise<boolean> {
+    const safeDepth = Number.isFinite(depth) ? Math.max(0, Math.min(100, Math.round(depth))) : 0;
+    return this.recordButtonEvent(slug, 'scroll', String(safeDepth), visitorId, undefined, utmSource, utmMedium, utmCampaign);
+  }
+
   private async recordButtonEvent(
-    slug: string, type: 'click' | 'view', label?: string, visitorId?: string, pos?: string,
+    slug: string, type: 'click' | 'view' | 'scroll', label?: string, visitorId?: string, pos?: string,
     utmSource?: string, utmMedium?: string, utmCampaign?: string,
   ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
@@ -447,6 +469,28 @@ export class TrackedUrlsService {
       viewUnique: Number(v?.c ?? 0),
       clickUnique: Number(c?.c ?? 0),
     };
+  }
+
+  /**
+   * Total e único por marco de rolagem (25/50/75/95%) — base do funil "Acessou →
+   * rolou até 25% → ... → 95%". Quem chega em 95% também gerou os eventos dos
+   * marcos anteriores, então "único" já é naturalmente decrescente (25 >= 50 >= ...).
+   */
+  async getScrollBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlScrollRow[]> {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select('b.label', 'depth')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'scroll'`)
+      .groupBy('b.label');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany();
+    return rows
+      .map(r => ({ depth: Number(r.depth), total: Number(r.total), unique: Number(r.unique) }))
+      .sort((a, b) => a.depth - b.depth);
   }
 
   /**

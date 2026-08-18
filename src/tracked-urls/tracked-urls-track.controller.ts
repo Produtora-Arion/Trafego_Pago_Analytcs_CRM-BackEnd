@@ -9,12 +9,13 @@ import { TrackedUrlsService } from './tracked-urls.service';
  *   GET  /t/{slug}/access?vid=...&utm_source=...&utm_medium=...&utm_campaign=...  → pageview
  *   GET  /t/{slug}/click?label=...&vid=...&pos=...&utm_source=...  → clique num botão/CTA
  *   GET  /t/{slug}/view?label=...&vid=...&pos=...&utm_source=...   → botão apareceu na tela (impressão)
+ *   GET  /t/{slug}/scroll?depth=25&vid=...&utm_source=...  → rolou até X% da página (25/50/75/95)
  *   POST /t/{slug}/form              → envio de formulário, body = dados do formulário
  *
  * `pos` = posição do botão entre os elementos [data-track] da página (pro relatório listar
- * os botões na ordem em que aparecem no site). `utm_*` em click/view = mesma UTM do acesso,
- * capturada de novo no momento do clique/visualização — dá pra saber qual campanha/anúncio
- * gerou aquele clique ou visualização específica, não só o acesso.
+ * os botões na ordem em que aparecem no site). `utm_*` em click/view/scroll = mesma UTM do
+ * acesso, capturada de novo no momento do evento — dá pra saber qual campanha/anúncio gerou
+ * aquele clique, visualização ou rolagem específica, não só o acesso.
  */
 @Controller('t')
 export class TrackedUrlsTrackController {
@@ -39,7 +40,9 @@ export class TrackedUrlsTrackController {
    * Cobre sozinho: acesso (com UTM e único) + clique/visualização de qualquer
    * elemento marcado com `data-track="nome-do-botao"` no HTML — delegação de
    * evento pra clique (funciona mesmo em botões renderizados depois pelo
-   * React) e IntersectionObserver + MutationObserver pra visualização.
+   * React) e IntersectionObserver + MutationObserver pra visualização — e
+   * profundidade de rolagem (25/50/75/95%) da página inteira, sem precisar
+   * marcar nada no HTML.
    */
   @SkipThrottle()
   @Get(':slug/pixel.js')
@@ -106,6 +109,36 @@ export class TrackedUrlsTrackController {
     ping('view', params);
   }
 
+  function trackScroll(depth) {
+    var params = Object.assign({ depth: depth, vid: getVisitorId() }, getUtms());
+    ping('scroll', params);
+  }
+
+  // Profundidade de rolagem — dispara uma vez por marco (25/50/75/95%), na
+  // primeira vez que a pessoa passa dele. Quem chega em 95% também disparou os
+  // marcos anteriores, então dá pra montar um funil "chegou até onde".
+  var SCROLL_MILESTONES = [25, 50, 75, 95];
+  var scrollSeen = {};
+  function scrollPct() {
+    var doc = document.documentElement, body = document.body || {};
+    var top = window.scrollY || doc.scrollTop || body.scrollTop || 0;
+    var scrollable = Math.max(doc.scrollHeight || 0, body.scrollHeight || 0) - window.innerHeight;
+    if (scrollable <= 0) return 100; // página cabe inteira na tela — já "viu tudo"
+    return Math.min(100, Math.round((top / scrollable) * 100));
+  }
+  var scrollTicking = false;
+  function onScroll() {
+    if (scrollTicking) return;
+    scrollTicking = true;
+    (window.requestAnimationFrame || function (fn) { setTimeout(fn, 100); })(function () {
+      scrollTicking = false;
+      var pct = scrollPct();
+      SCROLL_MILESTONES.forEach(function (m) {
+        if (pct >= m && !scrollSeen[m]) { scrollSeen[m] = true; trackScroll(m); }
+      });
+    });
+  }
+
   // Clique automático em qualquer elemento com data-track — delegação no
   // document, então funciona mesmo em botões que o React ainda vai renderizar.
   document.addEventListener('click', function (e) {
@@ -133,7 +166,12 @@ export class TrackedUrlsTrackController {
     document.querySelectorAll('[data-track]').forEach(function (el) { io.observe(el); });
   }
 
-  function start() { trackAccess(); scan(); }
+  function start() {
+    trackAccess();
+    scan();
+    onScroll(); // cobre página curta (sem scroll) que já nasce "vista até o fim"
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
   } else {
@@ -220,6 +258,23 @@ export class TrackedUrlsTrackController {
   ) {
     this.cors(res);
     await this.service.recordView(slug, label, vid, pos, utmSource, utmMedium, utmCampaign);
+    return res.status(204).send();
+  }
+
+  // Rolagem — no máximo 4 marcos por pageload (25/50/75/95), mesmo limite do resto.
+  @Throttle({ default: { limit: 120, ttl: 60000 } })
+  @Get(':slug/scroll')
+  async scroll(
+    @Param('slug') slug: string,
+    @Query('depth') depth: string | undefined,
+    @Query('vid') vid: string | undefined,
+    @Query('utm_source') utmSource: string | undefined,
+    @Query('utm_medium') utmMedium: string | undefined,
+    @Query('utm_campaign') utmCampaign: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.cors(res);
+    await this.service.recordScroll(slug, Number(depth), vid, utmSource, utmMedium, utmCampaign);
     return res.status(204).send();
   }
 
