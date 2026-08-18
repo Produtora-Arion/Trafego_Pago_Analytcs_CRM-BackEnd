@@ -1,6 +1,25 @@
 import { BadRequestException, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleAdsApi } from 'google-ads-api';
+import { createHash } from 'crypto';
+
+/**
+ * Normaliza um telefone brasileiro pro formato E.164 (+55DDDNÚMERO) exigido
+ * pelo Google antes de fazer o hash — sem isso o hash nunca bate com o que o
+ * Google calcula do lado dele. Aceita o número já mascarado do formulário
+ * (ex: "(47) 99123-4567") ou já em E.164.
+ */
+function normalizePhoneE164(raw: string): string | null {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 10) return null; // DDD + número, no mínimo
+  const withCountry = digits.startsWith('55') && digits.length >= 12 ? digits : `55${digits}`;
+  return `+${withCountry}`;
+}
+
+/** SHA-256 em hex minúsculo — formato exigido pelo Google pra e-mail/telefone com hash. */
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value.trim().toLowerCase()).digest('hex');
+}
 
 @Injectable()
 export class GoogleAdsService implements OnModuleInit {
@@ -743,6 +762,7 @@ export class GoogleAdsService implements OnModuleInit {
     conversionActionId: string,
     convertedAt: Date,
     value: number,
+    phone?: string,
   ): Promise<{ success: boolean; detail?: string }> {
     const cleanId = this.numId(customerId, 'customerId');
 
@@ -765,6 +785,16 @@ export class GoogleAdsService implements OnModuleInit {
       .replace('T', ' ')
       .replace(/\.\d+Z$/, '+00:00');
 
+    // Conversões Aprimoradas: telefone com hash SHA-256, além do gclid — dá ao
+    // Google um segundo sinal pra confirmar a conversão (e alimentar o Smart
+    // Bidding) mesmo quando o gclid se perde por bloqueio de cookie/rastreio
+    // entre o clique e a conversão. Nunca falha o upload por conta disso —
+    // um telefone ausente/curto demais só significa "sem esse sinal extra".
+    const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
+    const userIdentifiers = normalizedPhone
+      ? [{ hashedPhoneNumber: sha256Hex(normalizedPhone) }]
+      : undefined;
+
     const body = {
       conversions: [{
         gclid,
@@ -772,6 +802,7 @@ export class GoogleAdsService implements OnModuleInit {
         conversionDateTime: dt,
         conversionValue: value,
         currencyCode: 'BRL',
+        ...(userIdentifiers ? { userIdentifiers } : {}),
       }],
       partialFailure: true,
     };
