@@ -171,6 +171,7 @@ export class LeadsController {
         conversionActionId,
         lead.convertedAt,
         lead.conversionValue ?? 0,
+        lead.phone,
       );
       if (success) {
         await this.leads.markConversionUploaded(lead.id);
