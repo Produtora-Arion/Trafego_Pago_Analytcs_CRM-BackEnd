@@ -137,4 +137,13 @@ export class TrackedUrlsController {
   ) {
     return this.service.getButtonMatrix(Number(id), type === 'view' ? 'view' : 'click', from, to);
   }
+
+  @Get(':id/scroll')
+  getScrollBreakdown(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getScrollBreakdown(Number(id), from, to);
+  }
 }
