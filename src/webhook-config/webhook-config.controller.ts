@@ -39,6 +39,16 @@ export class WebhookConfigController {
     return this.service.updateConversionActionId(customerId, conversionActionId);
   }
 
+  /** Token do Meta (Graph API) e conta de anúncio padrão desta conta — nunca compartilhado entre clientes. */
+  @Patch(':customerId/meta')
+  updateMetaConfig(
+    @Param('customerId') customerId: string,
+    @Body('metaAccessToken') metaAccessToken: string | undefined,
+    @Body('metaAdAccountId') metaAdAccountId: string | undefined,
+  ) {
+    return this.service.updateMetaConfig(customerId, { accessToken: metaAccessToken, adAccountId: metaAdAccountId });
+  }
+
   /** Acessos da LP por dia, no período informado (ou todo o histórico se omitido). */
   @Get(':customerId/pageviews')
   getPageViews(

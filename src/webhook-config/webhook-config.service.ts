@@ -121,6 +121,37 @@ export class WebhookConfigService {
     return this.repo.save(entry);
   }
 
+  /**
+   * Credenciais do Meta (Graph API) desta conta — cada cliente tem seu próprio
+   * Business Manager, então o token nunca é compartilhado entre clientes
+   * (diferente do Google Ads, que usa uma MCC central). Retorna null se o
+   * cliente ainda não configurou nada — quem chama decide o que fazer.
+   */
+  async getMetaConfig(customerId: string): Promise<{ accessToken: string | null; adAccountId: string | null }> {
+    const entry = await this.repo.findOne({ where: { customerId } });
+    return { accessToken: entry?.metaAccessToken ?? null, adAccountId: entry?.metaAdAccountId ?? null };
+  }
+
+  async updateMetaConfig(
+    customerId: string,
+    patch: { accessToken?: string; adAccountId?: string },
+  ): Promise<WebhookToken> {
+    const existing = await this.repo.findOne({ where: { customerId } });
+    if (existing) {
+      if (patch.accessToken !== undefined) existing.metaAccessToken = patch.accessToken || null;
+      if (patch.adAccountId !== undefined) existing.metaAdAccountId = patch.adAccountId || null;
+      return this.repo.save(existing);
+    }
+    const entry = this.repo.create({
+      customerId,
+      token: this.generateToken(),
+      slug: this.generateSlug(customerId),
+      metaAccessToken: patch.accessToken || null,
+      metaAdAccountId: patch.adAccountId || null,
+    });
+    return this.repo.save(entry);
+  }
+
   /** Chamado pelo endpoint público — incrementa o contador de acessos de hoje pra esse slug. */
   async recordPageView(slug: string): Promise<boolean> {
     const customerId = await this.validateSlug(slug);

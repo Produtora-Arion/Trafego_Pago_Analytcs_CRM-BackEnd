@@ -1,75 +1,109 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { MetaAdsService } from './meta-ads.service';
+import { WebhookConfigService } from '../webhook-config/webhook-config.service';
 import { SupabaseAuthGuard, AdminOnlyGuard } from '../auth/supabase-auth.guard';
 
+/**
+ * Cada cliente tem seu próprio Business Manager no Meta — não existe uma MCC
+ * central como no Google Ads. Por isso toda rota é escopada por customerId: o
+ * token certo é resolvido aqui (nunca é fixo/global) antes de chamar o service.
+ */
 @Controller('meta')
 @UseGuards(SupabaseAuthGuard, AdminOnlyGuard)
 export class MetaAdsController {
-  constructor(private readonly meta: MetaAdsService) {}
+  constructor(
+    private readonly meta: MetaAdsService,
+    private readonly webhookConfig: WebhookConfigService,
+  ) {}
 
-  @Get('accounts')
-  listAccounts() {
-    return this.meta.listAdAccounts();
+  private async resolveToken(customerId: string): Promise<string> {
+    const { accessToken } = await this.webhookConfig.getMetaConfig(customerId);
+    if (!accessToken) {
+      throw new BadRequestException(
+        'Este cliente ainda não tem um token do Meta configurado (⚡ Webhook → Meta Ads).',
+      );
+    }
+    return accessToken;
   }
 
-  @Get(':accountId/overview')
-  getOverview(
+  @Get(':customerId/accounts')
+  async listAccounts(@Param('customerId') customerId: string) {
+    const token = await this.resolveToken(customerId);
+    return this.meta.listAdAccounts(token);
+  }
+
+  @Get(':customerId/:accountId/overview')
+  async getOverview(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Query('period') period = 'LAST_7_DAYS',
   ) {
-    return this.meta.getAccountOverview(accountId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.getAccountOverview(token, accountId, period);
   }
 
-  @Get(':accountId/campaigns')
-  listCampaigns(
+  @Get(':customerId/:accountId/campaigns')
+  async listCampaigns(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Query('period') period = 'LAST_7_DAYS',
   ) {
-    return this.meta.listCampaigns(accountId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.listCampaigns(token, accountId, period);
   }
 
-  @Get(':accountId/campaigns/:campaignId/adsets')
-  listAdSets(
+  @Get(':customerId/:accountId/campaigns/:campaignId/adsets')
+  async listAdSets(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Param('campaignId') campaignId: string,
     @Query('period') period = 'LAST_7_DAYS',
   ) {
-    return this.meta.listAdSets(accountId, campaignId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.listAdSets(token, accountId, campaignId, period);
   }
 
-  @Get(':accountId/campaigns/:campaignId/demographics')
-  getDemographics(
+  @Get(':customerId/:accountId/campaigns/:campaignId/demographics')
+  async getDemographics(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Param('campaignId') campaignId: string,
     @Query('period') period = 'LAST_30_DAYS',
   ) {
-    return this.meta.getDemographics(accountId, campaignId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.getDemographics(token, accountId, campaignId, period);
   }
 
-  @Get(':accountId/campaigns/:campaignId/day-of-week')
-  getDayOfWeek(
+  @Get(':customerId/:accountId/campaigns/:campaignId/day-of-week')
+  async getDayOfWeek(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Param('campaignId') campaignId: string,
     @Query('period') period = 'LAST_30_DAYS',
   ) {
-    return this.meta.getDayOfWeek(accountId, campaignId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.getDayOfWeek(token, accountId, campaignId, period);
   }
 
-  @Get(':accountId/campaigns/:campaignId/devices')
-  getDevices(
+  @Get(':customerId/:accountId/campaigns/:campaignId/devices')
+  async getDevices(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Param('campaignId') campaignId: string,
     @Query('period') period = 'LAST_30_DAYS',
   ) {
-    return this.meta.getDevices(accountId, campaignId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.getDevices(token, accountId, campaignId, period);
   }
 
-  @Get(':accountId/campaigns/:campaignId/placements')
-  getPlacements(
+  @Get(':customerId/:accountId/campaigns/:campaignId/placements')
+  async getPlacements(
+    @Param('customerId') customerId: string,
     @Param('accountId') accountId: string,
     @Param('campaignId') campaignId: string,
     @Query('period') period = 'LAST_30_DAYS',
   ) {
-    return this.meta.getPlacements(accountId, campaignId, period);
+    const token = await this.resolveToken(customerId);
+    return this.meta.getPlacements(token, accountId, campaignId, period);
   }
 }
