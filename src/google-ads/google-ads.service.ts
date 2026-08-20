@@ -756,6 +756,22 @@ export class GoogleAdsService implements OnModuleInit {
       .sort((a, b) => b.impressoes - a.impressoes);
   }
 
+  /**
+   * Envia uma conversão real (lead convertido no CRM) pro Google Ads via
+   * Data Manager API.
+   *
+   * Até 2026-08 isso usava o REST antigo do Google Ads
+   * (ConversionUploadService.UploadClickConversions, endpoint /v19/...) — o
+   * Google aposentou a v19 e bloqueou até a v23 pra quem não tinha esse
+   * upload liberado antes ("New integrations... limited to existing
+   * users"), então todo upload vinha falhando silenciosamente havia tempo,
+   * pra todos os clientes. A Data Manager API é o caminho oficial atual.
+   *
+   * Exige um GOOGLE_REFRESH_TOKEN emitido com o escopo extra
+   * 'https://www.googleapis.com/auth/datamanager' (além do 'adwords' de
+   * sempre) — rode `npm run get-token` de novo se este método começar a
+   * falhar com erro de permissão/escopo.
+   */
   async uploadOfflineConversion(
     customerId: string,
     gclid: string,
@@ -765,6 +781,10 @@ export class GoogleAdsService implements OnModuleInit {
     phone?: string,
   ): Promise<{ success: boolean; detail?: string }> {
     const cleanId = this.numId(customerId, 'customerId');
+    const managerId = this.numId(
+      this.config.getOrThrow('GOOGLE_MCC_CUSTOMER_ID'),
+      'GOOGLE_MCC_CUSTOMER_ID',
+    );
 
     // Obter access token via refresh token
     const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -777,13 +797,11 @@ export class GoogleAdsService implements OnModuleInit {
         grant_type:    'refresh_token',
       }),
     });
-    const { access_token } = await tokenRes.json() as any;
-
-    // Formato exigido: "yyyy-MM-dd HH:mm:ss+00:00"
-    const dt = convertedAt
-      .toISOString()
-      .replace('T', ' ')
-      .replace(/\.\d+Z$/, '+00:00');
+    const tokenJson = await tokenRes.json() as any;
+    if (!tokenJson.access_token) {
+      console.error('[uploadConversion] Falha ao obter access token:', tokenJson.error);
+      return { success: false, detail: 'Falha na autenticação com o Google' };
+    }
 
     // Conversões Aprimoradas: telefone com hash SHA-256, além do gclid — dá ao
     // Google um segundo sinal pra confirmar a conversão (e alimentar o Smart
@@ -791,45 +809,44 @@ export class GoogleAdsService implements OnModuleInit {
     // entre o clique e a conversão. Nunca falha o upload por conta disso —
     // um telefone ausente/curto demais só significa "sem esse sinal extra".
     const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
-    const userIdentifiers = normalizedPhone
-      ? [{ hashedPhoneNumber: sha256Hex(normalizedPhone) }]
+    const userData = normalizedPhone
+      ? { userIdentifiers: [{ phoneNumber: sha256Hex(normalizedPhone) }] }
       : undefined;
 
     const body = {
-      conversions: [{
-        gclid,
-        conversionAction: `customers/${cleanId}/conversionActions/${conversionActionId}`,
-        conversionDateTime: dt,
-        conversionValue: value,
-        currencyCode: 'BRL',
-        ...(userIdentifiers ? { userIdentifiers } : {}),
+      destinations: [{
+        operatingAccount: { accountType: 'GOOGLE_ADS', accountId: cleanId },
+        loginAccount:     { accountType: 'GOOGLE_ADS', accountId: managerId },
+        productDestinationId: conversionActionId,
       }],
-      partialFailure: true,
+      encoding: 'HEX',
+      events: [{
+        adIdentifiers: { gclid },
+        eventTimestamp: convertedAt.toISOString(),
+        conversionValue: value,
+        currency: 'BRL',
+        eventSource: 'WEB',
+        ...(userData ? { userData } : {}),
+      }],
     };
 
-    const res = await fetch(
-      `https://googleads.googleapis.com/v19/customers/${cleanId}:uploadClickConversions`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization:       `Bearer ${access_token}`,
-          'developer-token':   this.config.getOrThrow('GOOGLE_DEVELOPER_TOKEN'),
-          'login-customer-id': this.config.getOrThrow('GOOGLE_MCC_CUSTOMER_ID'),
-          'Content-Type':      'application/json',
-        },
-        body: JSON.stringify(body),
+    const res = await fetch('https://datamanager.googleapis.com/v1/events:ingest', {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${tokenJson.access_token}`,
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify(body),
+    });
 
     const result = await res.json() as any;
     // Loga só o suficiente pra depurar sem gravar gclid/valor/payload bruto nos logs.
-    if (!res.ok) {
-      console.error(`[uploadConversion] Falha na chamada à API do Google Ads (HTTP ${res.status})`);
+    if (!res.ok || result.error) {
+      console.error(`[uploadConversion] Falha na chamada à Data Manager API (HTTP ${res.status})`);
       return { success: false, detail: JSON.stringify(result) };
     }
-    if (result.partialFailureError) {
-      console.warn('[uploadConversion] Falha parcial reportada pela API do Google Ads');
-      return { success: false, detail: JSON.stringify(result.partialFailureError) };
+    if (result.fieldWarnings?.length) {
+      console.warn('[uploadConversion] Avisos da Data Manager API:', JSON.stringify(result.fieldWarnings));
     }
     return { success: true };
   }
