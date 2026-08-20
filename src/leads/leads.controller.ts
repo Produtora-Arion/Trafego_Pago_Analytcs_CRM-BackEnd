@@ -61,6 +61,87 @@ export class LeadsController {
     };
   }
 
+  /** Converte um período do Google Ads (LAST_7_DAYS, THIS_MONTH, CUSTOM:from:to) num intervalo de datas real. */
+  private periodToRange(period: string): { from: Date; to: Date } {
+    const to = new Date();
+    if (period.startsWith('CUSTOM:')) {
+      const [, from, toStr] = period.split(':');
+      return { from: new Date(`${from}T00:00:00.000Z`), to: new Date(`${toStr}T23:59:59.999Z`) };
+    }
+    const days = period === 'THIS_MONTH' || period === 'LAST_MONTH'
+      ? 31
+      : Number(period.replace(/\D/g, '')) || 7;
+    const from = new Date(to);
+    from.setDate(from.getDate() - days);
+    return { from, to };
+  }
+
+  /**
+   * Cruza o desempenho de cada palavra-chave (dados do Google Ads) com os
+   * leads REAIS do CRM daquele mesmo período — pra além do que o Google
+   * reporta como "conversions" (que pode estar contando o sinal errado,
+   * como descobrimos na conta da Patricia). Mostra, por keyword: quantos
+   * leads de verdade ela trouxe, e marca como "fantasma" quem gastou sem
+   * trazer nenhum.
+   */
+  @Get('keywords-real/:customerId')
+  async getKeywordsReal(
+    @Param('customerId') customerIdParam: string,
+    @Query('campaignId') campaignId: string | undefined,
+    @Query('period') period = 'LAST_30_DAYS',
+    @Req() req: any,
+  ) {
+    const customerId = this.tenant(req) ?? customerIdParam;
+    if (!customerId) throw new BadRequestException('customerId é obrigatório');
+
+    const { from, to } = this.periodToRange(period);
+
+    const [keywordRows, leadsComGclid] = await Promise.all([
+      this.googleAds.getKeywordPerformance(customerId, campaignId, period),
+      this.leads.findWithGclidInRange(customerId, from, to),
+    ]);
+
+    const brasiliaDate = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const keywordMap = await this.googleAds.resolveKeywordsForClicks(
+      customerId,
+      leadsComGclid.map((l) => ({ gclid: l.gclid, date: brasiliaDate(l.firstContactAt) })),
+    );
+
+    // Agrega "quantos leads reais" e "quantos viraram conversão de verdade"
+    // por palavra-chave (texto + tipo de correspondência).
+    const leadsPorKeyword = new Map<string, { leads: number; convertidos: number }>();
+    let naoIdentificados = 0;
+    for (const lead of leadsComGclid) {
+      const kw = keywordMap.get(lead.gclid);
+      if (!kw) { naoIdentificados++; continue; }
+      const key = `${kw.texto}|${kw.tipo_correspondencia}`;
+      const acc = leadsPorKeyword.get(key) ?? { leads: 0, convertidos: 0 };
+      acc.leads++;
+      if (lead.convertedAt) acc.convertidos++;
+      leadsPorKeyword.set(key, acc);
+    }
+
+    const resultado = keywordRows.map((r) => {
+      const key = `${r.palavra_chave}|${r.tipo_correspondencia}`;
+      const agg = leadsPorKeyword.get(key);
+      const leadsReais = agg?.leads ?? 0;
+      const custoNumero = Number(r.custo.replace('R$', '').replace(',', '.').trim()) || 0;
+      return {
+        ...r,
+        leads_reais: leadsReais,
+        convertidos_reais: agg?.convertidos ?? 0,
+        custo_por_lead_real: leadsReais > 0 ? `R$ ${(custoNumero / leadsReais).toFixed(2)}` : null,
+        fantasma: custoNumero > 0 && leadsReais === 0,
+      };
+    });
+
+    return {
+      periodo: period,
+      keywords: resultado,
+      leads_nao_identificados: naoIdentificados,
+    };
+  }
+
   /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
   create(@Body() body: CreateLeadDto, @Req() req: any) {

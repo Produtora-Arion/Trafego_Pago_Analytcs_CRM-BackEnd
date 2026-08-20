@@ -462,6 +462,53 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  /**
+   * Descobre qual palavra-chave gerou cada clique (gclid) — usado pra cruzar
+   * lead real do CRM com a keyword que trouxe ele, e assim enxergar quais
+   * keywords são "fantasma" (custam mas não geram lead de verdade), já que
+   * a métrica `conversions` do próprio Google pode contar sinal errado (ver
+   * caso Patricia: um clique de botão na página, não um lead real).
+   *
+   * click_view só aceita filtro de UM dia por consulta — por isso é uma
+   * chamada por gclid+data. Volume normal aqui é baixo (leads de um
+   * período, não todos os cliques), então não pesa.
+   */
+  async resolveKeywordsForClicks(
+    customerId: string,
+    clicks: { gclid: string; date: string }[],
+  ): Promise<Map<string, { texto: string; tipo_correspondencia: string } | null>> {
+    const customer = this.getCustomer(customerId);
+    const result = new Map<string, { texto: string; tipo_correspondencia: string } | null>();
+
+    await Promise.all(
+      clicks.map(async ({ gclid, date }) => {
+        if (result.has(gclid)) return; // gclid repetido no lote, não repete a chamada
+        result.set(gclid, null);
+        try {
+          const rows = await customer.query(`
+            SELECT click_view.keyword_info.text, click_view.keyword_info.match_type
+            FROM click_view
+            WHERE click_view.gclid = '${gclid.replace(/'/g, '')}'
+              AND segments.date = '${this.safeDate(date)}'
+          `);
+          const info = rows[0]?.click_view?.keyword_info;
+          if (info?.text) {
+            result.set(gclid, {
+              texto: info.text,
+              tipo_correspondencia: this.decodeMatchType(info.match_type),
+            });
+          }
+        } catch {
+          // click_view pode não ter dado pra esse dia/gclid (fora da janela de
+          // retenção, ainda não processado, veio de outra rede/parceiro) —
+          // fica como "não identificado", não quebra o resto da análise.
+        }
+      }),
+    );
+
+    return result;
+  }
+
   async getNegativeKeywords(customerId: string, campaignId: string) {
     const customer = this.getCustomer(customerId);
 
