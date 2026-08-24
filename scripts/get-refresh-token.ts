@@ -29,7 +29,13 @@ const oauth2Client = new google.auth.OAuth2(client_id, client_secret, REDIRECT_U
 
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: 'offline',
-  scope: ['https://www.googleapis.com/auth/adwords'],
+  // 'adwords': Google Ads API (campanhas, keywords, relatórios...)
+  // 'datamanager': Data Manager API — upload de conversões offline (leads
+  // convertidos no CRM), migrado em 2026-08 do endpoint antigo aposentado.
+  scope: [
+    'https://www.googleapis.com/auth/adwords',
+    'https://www.googleapis.com/auth/datamanager',
+  ],
   prompt: 'consent',
 });
 

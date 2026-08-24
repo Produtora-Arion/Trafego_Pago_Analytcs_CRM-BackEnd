@@ -66,6 +66,20 @@ export class LeadsService {
     return this.repo.find({ where, order: { firstContactAt: 'DESC' } });
   }
 
+  /**
+   * Leads com GCLID dentro de um intervalo de datas — base pra cruzar "qual
+   * palavra-chave gerou qual lead de verdade" (ver GoogleAdsService).
+   */
+  async findWithGclidInRange(customerId: string, from: Date, to: Date): Promise<Lead[]> {
+    return this.repo
+      .createQueryBuilder('lead')
+      .where('lead.customerId = :customerId', { customerId })
+      .andWhere('lead.gclid IS NOT NULL')
+      .andWhere("lead.gclid != ''")
+      .andWhere('lead.firstContactAt BETWEEN :from AND :to', { from, to })
+      .getMany();
+  }
+
   /** Quantos leads chegados no mês (YYYY-MM) estão hoje em cada etapa — agrupado por stageId. */
   async getMonthlyFunnel(customerId: string, month: string): Promise<{ stageId: number | null; count: number }[]> {
     const start = new Date(`${month}-01T00:00:00.000Z`);

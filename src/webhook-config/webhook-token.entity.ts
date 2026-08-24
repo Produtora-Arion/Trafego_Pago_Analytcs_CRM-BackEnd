@@ -22,6 +22,19 @@ export class WebhookToken {
   @Column({ nullable: true, type: 'varchar' })
   conversionActionId: string | null;
 
+  /**
+   * Token de acesso do Meta (Graph API) desta conta — cada cliente tem o seu
+   * próprio Business Manager, então não dá pra usar um token central único
+   * (diferente do Google Ads, que usa uma MCC compartilhada). Idealmente um
+   * token de Usuário de Sistema do BM do próprio cliente, sem expiração curta.
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  metaAccessToken: string | null;
+
+  /** ID da conta de anúncio do Meta (formato "act_123...") padrão desta conta. */
+  @Column({ nullable: true, type: 'varchar' })
+  metaAdAccountId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

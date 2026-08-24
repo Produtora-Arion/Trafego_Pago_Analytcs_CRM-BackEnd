@@ -1,22 +1,21 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 
+/**
+ * Diferente do Google Ads (uma MCC central acessa todos os clientes com um só
+ * refresh token), cada cliente tem seu próprio Business Manager no Meta — não
+ * dá pra centralizar. Por isso nenhum método aqui usa um token fixo: o token
+ * do cliente certo é resolvido por quem chama (o controller, via
+ * WebhookConfigService) e passado em toda chamada.
+ */
 @Injectable()
-export class MetaAdsService implements OnModuleInit {
-  private token: string;
+export class MetaAdsService {
   private readonly base = 'https://graph.facebook.com/v20.0';
-
-  constructor(private readonly config: ConfigService) {}
-
-  onModuleInit() {
-    this.token = this.config.getOrThrow('META_ACCESS_TOKEN');
-  }
 
   // ─── HTTP helper ──────────────────────────────────────────────────────────
 
-  private async get<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  private async get<T>(token: string, path: string, params: Record<string, string> = {}): Promise<T> {
     const url = new URL(`${this.base}${path}`);
-    url.searchParams.set('access_token', this.token);
+    url.searchParams.set('access_token', token);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     const res = await fetch(url.toString());
     const data = await res.json() as any;
@@ -65,8 +64,8 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Account ──────────────────────────────────────────────────────────────
 
-  async listAdAccounts() {
-    const data = await this.get<any>('/me/adaccounts', {
+  async listAdAccounts(token: string) {
+    const data = await this.get<any>(token, '/me/adaccounts', {
       fields: 'id,name,account_status,currency,business',
       limit: '100',
     });
@@ -79,9 +78,9 @@ export class MetaAdsService implements OnModuleInit {
     }));
   }
 
-  async getAccountOverview(accountId: string, dateRange = 'LAST_7_DAYS') {
+  async getAccountOverview(token: string, accountId: string, dateRange = 'LAST_7_DAYS') {
     const d = this.dateParams(dateRange);
-    const data = await this.get<any>(`/${accountId}/insights`, {
+    const data = await this.get<any>(token, `/${accountId}/insights`, {
       fields: 'impressions,clicks,spend,ctr,cpc,reach,frequency,actions',
       ...d,
     });
@@ -110,15 +109,15 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Campaigns ────────────────────────────────────────────────────────────
 
-  async listCampaigns(accountId: string, dateRange = 'LAST_7_DAYS') {
+  async listCampaigns(token: string, accountId: string, dateRange = 'LAST_7_DAYS') {
     const d = this.dateParams(dateRange);
 
     const [campsData, insightsData] = await Promise.all([
-      this.get<any>(`/${accountId}/campaigns`, {
+      this.get<any>(token, `/${accountId}/campaigns`, {
         fields: 'id,name,status,objective,daily_budget,lifetime_budget',
         limit: '100',
       }),
-      this.get<any>(`/${accountId}/insights`, {
+      this.get<any>(token, `/${accountId}/insights`, {
         fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,reach,actions',
         level: 'campaign', limit: '200', ...d,
       }),
@@ -161,16 +160,16 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Ad Sets (equivalent of keywords for Meta) ────────────────────────────
 
-  async listAdSets(accountId: string, campaignId: string, dateRange = 'LAST_7_DAYS') {
+  async listAdSets(token: string, accountId: string, campaignId: string, dateRange = 'LAST_7_DAYS') {
     const d = this.dateParams(dateRange);
     const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
 
     const [adSetsData, insightsData] = await Promise.all([
-      this.get<any>(`/${campaignId}/adsets`, {
+      this.get<any>(token, `/${campaignId}/adsets`, {
         fields: 'id,name,status,daily_budget,lifetime_budget,targeting,optimization_goal',
         limit: '100',
       }),
-      this.get<any>(`/${accountId}/insights`, {
+      this.get<any>(token, `/${accountId}/insights`, {
         fields: 'adset_id,impressions,clicks,spend,ctr,cpc,reach,actions',
         level: 'adset', filtering: filter, limit: '200', ...d,
       }),
@@ -211,16 +210,16 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Demographics ─────────────────────────────────────────────────────────
 
-  async getDemographics(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+  async getDemographics(token: string, accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
     const d = this.dateParams(dateRange);
     const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
     const base = { level: 'campaign', filtering: filter, ...d };
 
     const [ageData, genderData] = await Promise.all([
-      this.get<any>(`/${accountId}/insights`, {
+      this.get<any>(token, `/${accountId}/insights`, {
         fields: 'impressions,clicks,spend,actions', breakdowns: 'age', ...base,
       }),
-      this.get<any>(`/${accountId}/insights`, {
+      this.get<any>(token, `/${accountId}/insights`, {
         fields: 'impressions,clicks,spend,actions', breakdowns: 'gender', ...base,
       }),
     ]);
@@ -249,11 +248,11 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Day of week ──────────────────────────────────────────────────────────
 
-  async getDayOfWeek(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+  async getDayOfWeek(token: string, accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
     const d = this.dateParams(dateRange);
     const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
 
-    const data = await this.get<any>(`/${accountId}/insights`, {
+    const data = await this.get<any>(token, `/${accountId}/insights`, {
       fields: 'impressions,clicks,spend,actions',
       level: 'campaign', filtering: filter, time_increment: '1', ...d,
     });
@@ -283,11 +282,11 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Devices ──────────────────────────────────────────────────────────────
 
-  async getDevices(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+  async getDevices(token: string, accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
     const d = this.dateParams(dateRange);
     const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
 
-    const data = await this.get<any>(`/${accountId}/insights`, {
+    const data = await this.get<any>(token, `/${accountId}/insights`, {
       fields: 'impressions,clicks,spend,reach,actions',
       breakdowns: 'device_platform', level: 'campaign', filtering: filter, ...d,
     });
@@ -312,11 +311,11 @@ export class MetaAdsService implements OnModuleInit {
 
   // ─── Placements (publisher platforms) ────────────────────────────────────
 
-  async getPlacements(accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+  async getPlacements(token: string, accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
     const d = this.dateParams(dateRange);
     const filter = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignId] }]);
 
-    const data = await this.get<any>(`/${accountId}/insights`, {
+    const data = await this.get<any>(token, `/${accountId}/insights`, {
       fields: 'impressions,clicks,spend,reach,actions',
       breakdowns: 'publisher_platform', level: 'campaign', filtering: filter, ...d,
     });
