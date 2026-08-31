@@ -281,7 +281,7 @@ export class MetaAdsService {
 
     const [adsData, insightsData] = await Promise.all([
       this.get<any>(token, `/${adSetId}/ads`, {
-        fields: 'id,name,status,creative{thumbnail_url,title,body,image_url}',
+        fields: 'id,name,status,creative{thumbnail_url,title,body,image_url,object_story_spec}',
         limit: '100',
       }),
       this.get<any>(token, `/${accountId}/insights`, {
@@ -296,6 +296,11 @@ export class MetaAdsService {
     return (adsData.data ?? []).map((ad: any) => {
       const ins = iMap.get(ad.id);
       const cr = ad.creative ?? {};
+      const spec = cr.object_story_spec ?? {};
+      // Vídeo: thumbnail_url do creative às vezes vem vazio — o video_data
+      // dentro do object_story_spec tem sua própria imagem de capa como
+      // segunda fonte. Presença de video_data também é o sinal de "é vídeo".
+      const isVideo = !!spec.video_data;
       const spend = Number(ins?.spend ?? 0);
       const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
       const compras = this.purchases(ins?.actions);
@@ -307,7 +312,8 @@ export class MetaAdsService {
         nome: ad.name,
         status: ad.status,
         criativo: {
-          thumbnail: cr.thumbnail_url ?? cr.image_url ?? null,
+          thumbnail: cr.thumbnail_url ?? cr.image_url ?? spec.video_data?.image_url ?? null,
+          tipo: isVideo ? 'video' : 'imagem',
           titulo: cr.title ?? null,
           texto: cr.body ?? null,
         },
