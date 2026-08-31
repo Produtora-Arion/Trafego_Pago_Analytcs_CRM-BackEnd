@@ -35,6 +35,14 @@ export class WebhookToken {
   @Column({ nullable: true, type: 'varchar' })
   metaAdAccountId: string | null;
 
+  /**
+   * Nome de exibição — só é usado por clientes "só Meta" (sem conta no Google
+   * Ads da MCC), já que pra esses não existe nome nenhum vindo de lá. Clientes
+   * que têm Google Ads continuam mostrando o nome da conta do Google.
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  accountName: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

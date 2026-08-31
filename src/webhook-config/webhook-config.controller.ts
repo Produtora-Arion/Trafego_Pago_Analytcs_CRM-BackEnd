@@ -12,6 +12,27 @@ import { SupabaseAuthGuard, AdminOnlyGuard } from '../auth/supabase-auth.guard';
 export class WebhookConfigController {
   constructor(private readonly service: WebhookConfigService) {}
 
+  // ── Clientes "só Meta" (sem conta na MCC do Google Ads) ───────────────────
+  // Registradas ANTES de ':customerId' — senão o Nest casaria "meta-clients"
+  // como se fosse um customerId, já que rota dinâmica vem primeiro na busca.
+
+  @Get('meta-clients')
+  listMetaClients() {
+    return this.service.listMetaClients();
+  }
+
+  @Post('meta-clients')
+  createMetaClient(
+    @Body('accountName') accountName: string,
+    @Body('metaAccessToken') metaAccessToken: string,
+    @Body('metaAdAccountId') metaAdAccountId: string,
+  ) {
+    return this.service.createMetaOnlyClient(accountName, {
+      accessToken: metaAccessToken,
+      adAccountId: metaAdAccountId,
+    });
+  }
+
   /** Retorna (ou cria) o webhook config do cliente. Passa ?name= para gerar slug. */
   @Get(':customerId')
   getOrCreate(
