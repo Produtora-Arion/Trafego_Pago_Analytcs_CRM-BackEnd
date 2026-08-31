@@ -43,6 +43,26 @@ export class MetaAdsService {
     return Number(actions?.find(a => a.action_type === type)?.value ?? 0);
   }
 
+  /** Mesmo que `action`, mas pra action_values (valor em R$ da conversão, não a contagem). */
+  private actionValue(actionValues: any[] | undefined, type: string): number {
+    return Number(actionValues?.find(a => a.action_type === type)?.value ?? 0);
+  }
+
+  /**
+   * Compras: tenta `omni_purchase` primeiro (evento unificado recomendado pelo
+   * Meta, cobre site+app+loja) e cai pra `purchase` (pixel legado) se não
+   * tiver — depende de qual versão o pixel/CAPI do cliente está mandando.
+   */
+  private purchases(actions: any[] | undefined): number {
+    return this.action(actions, 'omni_purchase') || this.action(actions, 'purchase');
+  }
+  private purchaseValue(actionValues: any[] | undefined): number {
+    return this.actionValue(actionValues, 'omni_purchase') || this.actionValue(actionValues, 'purchase');
+  }
+  private engagements(actions: any[] | undefined): number {
+    return this.action(actions, 'post_engagement');
+  }
+
   private allActions(actions: any[] | undefined) {
     if (!actions?.length) return [];
     const LABELS: Record<string, string> = {
@@ -123,7 +143,7 @@ export class MetaAdsService {
         limit: '100',
       }),
       this.get<any>(token, `/${accountId}/insights`, {
-        fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,reach,actions',
+        fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,reach,actions,action_values',
         level: 'campaign', limit: '200', ...d,
       }),
     ]);
@@ -141,12 +161,23 @@ export class MetaAdsService {
       const ins = iMap.get(c.id);
       const spend = Number(ins?.spend ?? 0);
       const clicks = Number(ins?.clicks ?? 0);
+      const objetivo = OBJ[c.objective] ?? c.objective ?? 'N/A';
       const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
+      const compras = this.purchases(ins?.actions);
+      const valorCompras = this.purchaseValue(ins?.action_values);
+      const engajamentos = this.engagements(ins?.actions);
+
+      // "Conversão principal" muda com o objetivo — pra Vendas é compra, pra
+      // Engajamento é engajamento, resto (Leads/Mensagens e afins) é mensagem.
+      // As métricas completas (compras/valor/roas/engajamentos) sempre vêm
+      // no objeto, independente disso — isso aqui só decide o resumo padrão.
+      const principal = objetivo === 'Vendas' ? compras : objetivo === 'Engajamento' ? engajamentos : mensagens;
+
       return {
         id: c.id,
         nome: c.name,
         status: c.status,
-        objetivo: OBJ[c.objective] ?? c.objective ?? 'N/A',
+        objetivo,
         orcamento_diario: c.daily_budget ? `R$ ${(Number(c.daily_budget) / 100).toFixed(2)}` : null,
         orcamento_lifetime: c.lifetime_budget ? `R$ ${(Number(c.lifetime_budget) / 100).toFixed(2)}` : null,
         impressoes: Number(ins?.impressions ?? 0),
@@ -156,9 +187,15 @@ export class MetaAdsService {
         cpc_medio: `R$ ${Number(ins?.cpc ?? 0).toFixed(2)}`,
         alcance: Number(ins?.reach ?? 0),
         mensagens,
-        conversoes: mensagens,
-        custo_por_conversao: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
-        taxa_conversao: clicks > 0 ? `${((mensagens / clicks) * 100).toFixed(2)}%` : '0.00%',
+        compras,
+        valor_compras: `R$ ${valorCompras.toFixed(2)}`,
+        roas: spend > 0 ? Number((valorCompras / spend).toFixed(2)) : 0,
+        custo_por_compra: compras > 0 ? `R$ ${(spend / compras).toFixed(2)}` : 'Sem compras',
+        engajamentos,
+        custo_por_engajamento: engajamentos > 0 ? `R$ ${(spend / engajamentos).toFixed(2)}` : 'Sem engajamento',
+        conversoes: principal,
+        custo_por_conversao: principal > 0 ? `R$ ${(spend / principal).toFixed(2)}` : 'Sem conversões',
+        taxa_conversao: clicks > 0 ? `${((principal / clicks) * 100).toFixed(2)}%` : '0.00%',
       };
     });
   }
@@ -175,7 +212,7 @@ export class MetaAdsService {
         limit: '100',
       }),
       this.get<any>(token, `/${accountId}/insights`, {
-        fields: 'adset_id,impressions,clicks,spend,ctr,cpc,reach,actions',
+        fields: 'adset_id,impressions,clicks,spend,ctr,cpc,reach,frequency,actions,action_values',
         level: 'adset', filtering: filter, limit: '200', ...d,
       }),
     ]);
@@ -188,6 +225,9 @@ export class MetaAdsService {
       const t = a.targeting ?? {};
       const spend = Number(ins?.spend ?? 0);
       const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
+      const compras = this.purchases(ins?.actions);
+      const valorCompras = this.purchaseValue(ins?.action_values);
+      const engajamentos = this.engagements(ins?.actions);
       return {
         id: a.id,
         nome: a.name,
@@ -207,7 +247,15 @@ export class MetaAdsService {
         custo: `R$ ${spend.toFixed(2)}`,
         ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
         alcance: Number(ins?.reach ?? 0),
+        frequencia: Number(ins?.frequency ?? 0).toFixed(2),
         mensagens,
+        custo_por_mensagem: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
+        compras,
+        valor_compras: `R$ ${valorCompras.toFixed(2)}`,
+        roas: spend > 0 ? Number((valorCompras / spend).toFixed(2)) : 0,
+        custo_por_compra: compras > 0 ? `R$ ${(spend / compras).toFixed(2)}` : 'Sem compras',
+        engajamentos,
+        custo_por_engajamento: engajamentos > 0 ? `R$ ${(spend / engajamentos).toFixed(2)}` : 'Sem engajamento',
         acoes: this.allActions(ins?.actions),
       };
     });
