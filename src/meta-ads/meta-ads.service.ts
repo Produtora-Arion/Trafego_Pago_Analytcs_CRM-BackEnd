@@ -270,6 +270,66 @@ export class MetaAdsService {
     });
   }
 
+  /**
+   * Anúncios de um conjunto — mesma lógica/métricas de listAdSets, um nível
+   * abaixo. Traz a criativa (thumbnail, título, texto) pra dar contexto
+   * visual de qual peça é qual, sem precisar abrir o Gerenciador de Anúncios.
+   */
+  async listAds(token: string, accountId: string, adSetId: string, dateRange = 'LAST_7_DAYS') {
+    const d = this.dateParams(dateRange);
+    const filter = JSON.stringify([{ field: 'adset.id', operator: 'IN', value: [adSetId] }]);
+
+    const [adsData, insightsData] = await Promise.all([
+      this.get<any>(token, `/${adSetId}/ads`, {
+        fields: 'id,name,status,creative{thumbnail_url,title,body,image_url}',
+        limit: '100',
+      }),
+      this.get<any>(token, `/${accountId}/insights`, {
+        fields: 'ad_id,impressions,clicks,spend,ctr,cpc,cpm,reach,actions,action_values',
+        level: 'ad', filtering: filter, limit: '200', ...d,
+      }),
+    ]);
+
+    const iMap = new Map<string, any>();
+    for (const ins of insightsData.data ?? []) iMap.set(ins.ad_id, ins);
+
+    return (adsData.data ?? []).map((ad: any) => {
+      const ins = iMap.get(ad.id);
+      const cr = ad.creative ?? {};
+      const spend = Number(ins?.spend ?? 0);
+      const mensagens = this.action(ins?.actions, 'onsite_conversion.total_messaging_connection');
+      const compras = this.purchases(ins?.actions);
+      const valorCompras = this.purchaseValue(ins?.action_values);
+      const engajamentos = this.engagements(ins?.actions);
+      const visualizacoesPagina = this.landingPageViews(ins?.actions);
+      return {
+        id: ad.id,
+        nome: ad.name,
+        status: ad.status,
+        criativo: {
+          thumbnail: cr.thumbnail_url ?? cr.image_url ?? null,
+          titulo: cr.title ?? null,
+          texto: cr.body ?? null,
+        },
+        impressoes: Number(ins?.impressions ?? 0),
+        cliques: Number(ins?.clicks ?? 0),
+        custo: `R$ ${spend.toFixed(2)}`,
+        ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
+        cpm: `R$ ${Number(ins?.cpm ?? 0).toFixed(2)}`,
+        alcance: Number(ins?.reach ?? 0),
+        visualizacoes_pagina: visualizacoesPagina,
+        mensagens,
+        custo_por_mensagem: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
+        compras,
+        valor_compras: `R$ ${valorCompras.toFixed(2)}`,
+        roas: spend > 0 ? Number((valorCompras / spend).toFixed(2)) : 0,
+        custo_por_compra: compras > 0 ? `R$ ${(spend / compras).toFixed(2)}` : 'Sem compras',
+        engajamentos,
+        custo_por_engajamento: engajamentos > 0 ? `R$ ${(spend / engajamentos).toFixed(2)}` : 'Sem engajamento',
+      };
+    });
+  }
+
   // ─── Demographics ─────────────────────────────────────────────────────────
 
   async getDemographics(token: string, accountId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
