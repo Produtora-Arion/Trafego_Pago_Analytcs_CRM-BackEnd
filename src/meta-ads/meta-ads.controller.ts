@@ -63,6 +63,17 @@ export class MetaAdsController {
     return this.meta.listAdSets(token, accountId, campaignId, period);
   }
 
+  @Get(':customerId/:accountId/campaigns/:campaignId/adsets/:adSetId/ads')
+  async listAds(
+    @Param('customerId') customerId: string,
+    @Param('accountId') accountId: string,
+    @Param('adSetId') adSetId: string,
+    @Query('period') period = 'LAST_7_DAYS',
+  ) {
+    const token = await this.resolveToken(customerId);
+    return this.meta.listAds(token, accountId, adSetId, period);
+  }
+
   @Get(':customerId/:accountId/campaigns/:campaignId/demographics')
   async getDemographics(
     @Param('customerId') customerId: string,
