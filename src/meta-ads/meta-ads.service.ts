@@ -62,6 +62,10 @@ export class MetaAdsService {
   private engagements(actions: any[] | undefined): number {
     return this.action(actions, 'post_engagement');
   }
+  /** `landing_page_view` é o padrão atual; `omni_landing_page_view` cobre pixels/eventos mais antigos. */
+  private landingPageViews(actions: any[] | undefined): number {
+    return this.action(actions, 'landing_page_view') || this.action(actions, 'omni_landing_page_view');
+  }
 
   private allActions(actions: any[] | undefined) {
     if (!actions?.length) return [];
@@ -143,7 +147,7 @@ export class MetaAdsService {
         limit: '100',
       }),
       this.get<any>(token, `/${accountId}/insights`, {
-        fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,reach,actions,action_values',
+        fields: 'campaign_id,impressions,clicks,spend,ctr,cpc,cpm,reach,actions,action_values',
         level: 'campaign', limit: '200', ...d,
       }),
     ]);
@@ -185,7 +189,9 @@ export class MetaAdsService {
         custo: `R$ ${spend.toFixed(2)}`,
         ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
         cpc_medio: `R$ ${Number(ins?.cpc ?? 0).toFixed(2)}`,
+        cpm: `R$ ${Number(ins?.cpm ?? 0).toFixed(2)}`,
         alcance: Number(ins?.reach ?? 0),
+        visualizacoes_pagina: this.landingPageViews(ins?.actions),
         mensagens,
         compras,
         valor_compras: `R$ ${valorCompras.toFixed(2)}`,
@@ -212,7 +218,7 @@ export class MetaAdsService {
         limit: '100',
       }),
       this.get<any>(token, `/${accountId}/insights`, {
-        fields: 'adset_id,impressions,clicks,spend,ctr,cpc,reach,frequency,actions,action_values',
+        fields: 'adset_id,impressions,clicks,spend,ctr,cpc,cpm,reach,frequency,actions,action_values',
         level: 'adset', filtering: filter, limit: '200', ...d,
       }),
     ]);
@@ -228,6 +234,7 @@ export class MetaAdsService {
       const compras = this.purchases(ins?.actions);
       const valorCompras = this.purchaseValue(ins?.action_values);
       const engajamentos = this.engagements(ins?.actions);
+      const visualizacoesPagina = this.landingPageViews(ins?.actions);
       return {
         id: a.id,
         nome: a.name,
@@ -246,8 +253,10 @@ export class MetaAdsService {
         cliques: Number(ins?.clicks ?? 0),
         custo: `R$ ${spend.toFixed(2)}`,
         ctr: `${Number(ins?.ctr ?? 0).toFixed(2)}%`,
+        cpm: `R$ ${Number(ins?.cpm ?? 0).toFixed(2)}`,
         alcance: Number(ins?.reach ?? 0),
         frequencia: Number(ins?.frequency ?? 0).toFixed(2),
+        visualizacoes_pagina: visualizacoesPagina,
         mensagens,
         custo_por_mensagem: mensagens > 0 ? `R$ ${(spend / mensagens).toFixed(2)}` : 'Sem conversões',
         compras,
