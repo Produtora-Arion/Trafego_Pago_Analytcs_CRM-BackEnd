@@ -1,21 +1,44 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { GoogleAdsService } from './google-ads.service';
+import { WebhookConfigService } from '../webhook-config/webhook-config.service';
 import { SupabaseAuthGuard, AuthUser } from '../auth/supabase-auth.guard';
 
 @Controller('ads')
 @UseGuards(SupabaseAuthGuard)
 export class GoogleAdsController {
-  constructor(private readonly googleAds: GoogleAdsService) {}
+  constructor(
+    private readonly googleAds: GoogleAdsService,
+    private readonly webhookConfig: WebhookConfigService,
+  ) {}
 
+  /**
+   * Lista unificada do seletor de cliente: contas da MCC do Google Ads +
+   * clientes "só Meta" (sem conta no Google, ex: um produto próprio ou um
+   * cliente cujo Google ainda não foi conectado). Cada entrada diz o que ela
+   * tem (hasGoogle/hasMeta) — as abas Google/Meta usam isso pra saber se
+   * mostram dado ou um estado vazio, sem tentar buscar o que não existe.
+   */
   @Get('accounts')
   async listAccounts(@Req() req: any) {
-    const accounts = await this.googleAds.listManagedAccounts();
+    const [googleAccounts, metaClients] = await Promise.all([
+      this.googleAds.listManagedAccounts(),
+      this.webhookConfig.listMetaClients(),
+    ]);
+    const metaIds = new Set(metaClients.map((m) => m.customerId));
+
+    const combined = [
+      ...googleAccounts.map((a) => ({ ...a, hasGoogle: true, hasMeta: metaIds.has(a.id) })),
+      ...metaClients
+        .filter((m) => !googleAccounts.some((a) => a.id === m.customerId))
+        .map((m) => ({ id: m.customerId, name: m.accountName ?? m.customerId, currency: null, hasGoogle: false, hasMeta: true })),
+    ];
+
     const user = req.user as AuthUser | undefined;
     // Cliente enxerga somente a própria conta
     if (user && user.role !== 'admin') {
-      return accounts.filter((a) => a.id === user.customerId);
+      return combined.filter((a) => a.id === user.customerId);
     }
-    return accounts;
+    return combined;
   }
 
   @Get(':customerId/overview')
