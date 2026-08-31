@@ -65,8 +65,13 @@ export class MetaAdsService {
   // ─── Account ──────────────────────────────────────────────────────────────
 
   async listAdAccounts(token: string) {
+    // "business" fica de fora de propósito: exige a permissão
+    // business_management, que a maioria dos tokens de cliente (System User
+    // com só ads_read) não tem — pedir esse campo quebrava a chamada inteira
+    // com "Requires business_management permission" pra qualquer cliente
+    // configurado só com leitura de anúncios.
     const data = await this.get<any>(token, '/me/adaccounts', {
-      fields: 'id,name,account_status,currency,business',
+      fields: 'id,name,account_status,currency',
       limit: '100',
     });
     return (data.data ?? []).map((a: any) => ({
@@ -74,7 +79,7 @@ export class MetaAdsService {
       nome: a.name,
       moeda: a.currency ?? 'BRL',
       status: a.account_status,
-      negocio: a.business?.name ?? null,
+      negocio: null,
     }));
   }
 
