@@ -103,11 +103,14 @@ export class WebhookConfigService {
     }
   }
 
-  /** Devolve a entidade com metaAccessToken em texto plano, pronta pra quem já
-   * está autorizado (admin) a ver/usar — a cifra protege o banco, não o admin. */
+  /** Devolve a entidade com metaAccessToken/hotmartHottok em texto plano, pronta
+   * pra quem já está autorizado (admin) a ver/usar — a cifra protege o banco, não o admin. */
   private toPublic(entry: WebhookToken): WebhookToken {
-    if (!entry.metaAccessToken) return entry;
-    return { ...entry, metaAccessToken: this.decryptToken(entry.metaAccessToken) };
+    return {
+      ...entry,
+      metaAccessToken: entry.metaAccessToken ? this.decryptToken(entry.metaAccessToken) : entry.metaAccessToken,
+      hotmartHottok: entry.hotmartHottok ? this.decryptToken(entry.hotmartHottok) : entry.hotmartHottok,
+    };
   }
 
   async getOrCreate(customerId: string, accountName?: string): Promise<WebhookToken> {
@@ -205,6 +208,43 @@ export class WebhookConfigService {
       slug: this.generateSlug(customerId),
       metaAccessToken: encryptedToken || null,
       metaAdAccountId: patch.adAccountId || null,
+    });
+    return this.toPublic(await this.repo.save(entry));
+  }
+
+  /**
+   * Configuração da integração Hotmart → Meta Conversions API desta conta:
+   * Hottok (autentica o webhook) + Pixel ID (destino do evento de Compra).
+   */
+  async getHotmartConfig(customerId: string): Promise<{ hottok: string | null; pixelId: string | null; metaAccessToken: string | null }> {
+    const entry = await this.repo.findOne({ where: { customerId } });
+    return {
+      hottok: entry?.hotmartHottok ? this.decryptToken(entry.hotmartHottok) : null,
+      pixelId: entry?.metaPixelId ?? null,
+      metaAccessToken: entry?.metaAccessToken ? this.decryptToken(entry.metaAccessToken) : null,
+    };
+  }
+
+  async updateHotmartConfig(
+    customerId: string,
+    patch: { hottok?: string; pixelId?: string },
+  ): Promise<WebhookToken> {
+    const existing = await this.repo.findOne({ where: { customerId } });
+    const encryptedHottok = patch.hottok !== undefined
+      ? (patch.hottok ? this.encryptToken(patch.hottok) : null)
+      : undefined;
+
+    if (existing) {
+      if (encryptedHottok !== undefined) existing.hotmartHottok = encryptedHottok;
+      if (patch.pixelId !== undefined) existing.metaPixelId = patch.pixelId || null;
+      return this.toPublic(await this.repo.save(existing));
+    }
+    const entry = this.repo.create({
+      customerId,
+      token: this.generateToken(),
+      slug: this.generateSlug(customerId),
+      hotmartHottok: encryptedHottok || null,
+      metaPixelId: patch.pixelId || null,
     });
     return this.toPublic(await this.repo.save(entry));
   }
