@@ -70,6 +70,16 @@ export class WebhookConfigController {
     return this.service.updateMetaConfig(customerId, { accessToken: metaAccessToken, adAccountId: metaAdAccountId });
   }
 
+  /** Hottok da Hotmart + Pixel ID do Meta — integração de venda real → Conversions API. */
+  @Patch(':customerId/hotmart')
+  updateHotmartConfig(
+    @Param('customerId') customerId: string,
+    @Body('hottok') hottok: string | undefined,
+    @Body('pixelId') pixelId: string | undefined,
+  ) {
+    return this.service.updateHotmartConfig(customerId, { hottok, pixelId });
+  }
+
   /** Acessos da LP por dia, no período informado (ou todo o histórico se omitido). */
   @Get(':customerId/pageviews')
   getPageViews(

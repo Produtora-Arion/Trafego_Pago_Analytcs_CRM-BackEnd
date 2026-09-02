@@ -43,6 +43,18 @@ export class WebhookToken {
   @Column({ nullable: true, type: 'varchar' })
   accountName: string | null;
 
+  /**
+   * Hottok (token de verificação) do webhook da Hotmart desta conta — cifrado
+   * do mesmo jeito que o metaAccessToken, nunca em texto puro no banco. Usado
+   * pra confirmar que um aviso de venda realmente veio da Hotmart.
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  hotmartHottok: string | null;
+
+  /** ID do Pixel do Meta desta conta — destino dos eventos de Compra (Conversions API). */
+  @Column({ nullable: true, type: 'varchar' })
+  metaPixelId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }
