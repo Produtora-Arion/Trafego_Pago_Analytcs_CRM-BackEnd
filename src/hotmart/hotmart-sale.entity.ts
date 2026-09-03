@@ -32,6 +32,15 @@ export class HotmartSale {
   @Column({ nullable: true, type: 'varchar' })
   fbclid: string | null;
 
+  /**
+   * De onde veio a venda, pra exibição — "Anúncio Meta" (tem fbclid), a
+   * origem lida do link (ex: "instagram-bio", quando a página foi aberta a
+   * partir de um link marcado na bio), ou null quando não veio marcado
+   * (acesso direto/orgânico sem nenhuma origem identificável).
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  channel: string | null;
+
   @Column({ default: false })
   metaSent: boolean;
 
