@@ -99,10 +99,16 @@ export class HotmartService {
       return { ok: true, detail: 'Venda já processada anteriormente (idempotência)' };
     }
 
-    const fbclid = ref ? (await this.clickRepo.findOne({ where: { id: ref } }))?.fbclid ?? null : null;
+    // "ref" pode ser duas coisas: um código gerado por um clique de anúncio
+    // (resolve pra um fbclid de verdade na tabela) ou uma marcação fixa que
+    // o site já manda pronta no link (ex: "instagram-bio") — não existe na
+    // tabela, mas ainda diz de onde veio.
+    const clickRef = ref ? await this.clickRepo.findOne({ where: { id: ref } }) : null;
+    const fbclid = clickRef?.fbclid ?? null;
+    const channel = fbclid ? 'Anúncio Meta' : ref || null;
 
     const sale = this.saleRepo.create({
-      customerId, transactionId, buyerName, buyerEmail, value, currency, fbclid,
+      customerId, transactionId, buyerName, buyerEmail, value, currency, fbclid, channel,
       rawPayload: JSON.stringify(body),
     });
 
