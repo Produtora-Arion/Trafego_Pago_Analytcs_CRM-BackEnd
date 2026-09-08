@@ -1,6 +1,6 @@
 import { Controller, Get, Patch, Post, Delete, Param, Body, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { LeadsService, CreateLeadDto, UpdateLeadFieldsDto } from './leads.service';
+import { Lead } from './lead.entity';
 import { GoogleAdsService } from '../google-ads/google-ads.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
@@ -16,13 +16,56 @@ export class LeadsController {
     private readonly crmStages: CrmStagesService,
     private readonly webhookConfig: WebhookConfigService,
     private readonly lossReasons: LossReasonsService,
-    private readonly config: ConfigService,
   ) {}
 
   /** null para admin (acesso total), customerId do token para cliente */
   private tenant(req: any): string | null {
     const u = req.user as AuthUser | undefined;
     return u && u.role !== 'admin' ? u.customerId : null;
+  }
+
+  /**
+   * Tenta enviar a conversão offline pro Google Ads e já grava o resultado no
+   * lead (sucesso ou motivo da falha). Usado tanto no fluxo normal de marcar
+   * "Ganho" quanto no reenvio manual depois de corrigir uma config.
+   *
+   * Nunca usa um valor emprestado de outra conta: se esta conta específica
+   * não tem Conversion Action ID configurado (⚡ Webhook), nem tenta a API —
+   * cada cliente só pode subir conversão pra sua própria conta Google Ads,
+   * nunca pra ação de conversão de outro cliente por engano.
+   */
+  private async attemptGoogleUpload(
+    lead: Lead,
+    customerId: string,
+  ): Promise<{ success: boolean; detail: string }> {
+    const conversionActionId = await this.webhookConfig.getConversionActionId(customerId);
+    if (!conversionActionId) {
+      const detail = 'Conversion Action ID não configurado para esta conta — configure em ⚡ Webhook → Conversão do Google Ads.';
+      await this.leads.markConversionUploadFailed(lead.id, detail);
+      return { success: false, detail };
+    }
+
+    const { success, detail } = await this.googleAds.uploadOfflineConversion(
+      customerId,
+      lead.gclid,
+      conversionActionId,
+      lead.convertedAt,
+      lead.conversionValue ?? 0,
+      lead.phone,
+    );
+
+    if (success) {
+      await this.leads.markConversionUploaded(lead.id);
+      return { success: true, detail: detail ?? 'Conversão enviada com sucesso.' };
+    }
+
+    // O detalhe bruto do erro (estrutura de conta, IDs internos do Google Ads)
+    // já foi logado no servidor por uploadOfflineConversion — pro cliente final
+    // (e pro que fica salvo/visível no card) só uma mensagem genérica, nunca a
+    // resposta crua da API do Google.
+    const genericDetail = 'Não foi possível registrar a conversão no Google Ads. Nossa equipe foi notificada.';
+    await this.leads.markConversionUploadFailed(lead.id, genericDetail);
+    return { success: false, detail: genericDetail };
   }
 
   /** Cliente sempre força o próprio customerId (nunca confia no query param); admin pode listar tudo ou filtrar. */
@@ -215,17 +258,10 @@ export class LeadsController {
   ) {
     const tenantId = this.tenant(req);
     // Cliente: sempre a própria conta (nunca confia no body). Admin: o que veio
-    // no body, com a env var como último fallback legado.
-    const customerId = tenantId || customerIdBody || this.config.get('GA_CONVERSION_CUSTOMER_ID', '');
-
-    // Cada cliente tem sua própria conta Google Ads e sua própria ação de
-    // conversão — nunca aceita esse valor vindo do body (um cliente poderia
-    // apontar pra ação de conversão de outra conta). Resolve sempre pelo
-    // customerId de destino; a env var só cobre o caso legado de quem nunca
-    // configurou nada em ⚡ Webhook.
-    const conversionActionId =
-      (await this.webhookConfig.getConversionActionId(customerId)) ||
-      this.config.get('GA_CONVERSION_ACTION_ID', '');
+    // no body. Sem fallback pra nenhuma outra conta — se faltar customerId
+    // aqui, é erro de chamada, não motivo pra emprestar a conta de outro cliente.
+    const customerId = tenantId || customerIdBody;
+    if (!customerId) throw new BadRequestException('customerId é obrigatório');
 
     let stageLabel: string | undefined;
     let resolvedStageId: number | undefined;
@@ -235,37 +271,45 @@ export class LeadsController {
       resolvedStageId = stage.id;
     }
 
+    // conversionActionId gravado no lead é só o registro histórico de qual
+    // ação de conversão esta conta tinha configurada no momento da conversão
+    // — o envio de verdade sempre resolve de novo em attemptGoogleUpload (nunca
+    // usa esse valor direto, pra nunca ficar preso a uma config antiga/errada).
+    const conversionActionId = await this.webhookConfig.getConversionActionId(customerId);
     const lead = await this.leads.markConverted(
       Number(id),
       value ?? 0,
       customerId,
-      conversionActionId,
+      conversionActionId ?? '',
       tenantId,
       resolvedStageId,
       stageLabel,
     );
 
     if (lead.gclid) {
-      const { success, detail } = await this.googleAds.uploadOfflineConversion(
-        customerId,
-        lead.gclid,
-        conversionActionId,
-        lead.convertedAt,
-        lead.conversionValue ?? 0,
-        lead.phone,
-      );
-      if (success) {
-        await this.leads.markConversionUploaded(lead.id);
-      }
-      // O detalhe bruto do erro (estrutura de conta, IDs internos do Google Ads)
-      // já foi logado no servidor por uploadOfflineConversion — pro cliente final
-      // só uma mensagem genérica, nunca a resposta crua da API do Google.
-      const uploadDetail = success
-        ? detail
-        : 'Não foi possível registrar a conversão no Google Ads. Nossa equipe foi notificada.';
-      return { ...lead, uploadSuccess: success, uploadDetail };
+      const { success, detail } = await this.attemptGoogleUpload(lead, customerId);
+      return { ...lead, uploadSuccess: success, uploadDetail: detail, conversionUploadError: success ? null : detail };
     }
 
     return { ...lead, uploadSuccess: false, uploadDetail: 'Lead sem GCLID — não veio de anúncio rastreado' };
+  }
+
+  /**
+   * Reenvia manualmente a conversão pro Google Ads — pra usar depois de
+   * corrigir uma config que faltava (ex: Conversion Action ID) sem precisar
+   * mover o lead de etapa de novo. Só faz sentido pra lead já convertido e
+   * com GCLID; resolve a config da conta na hora, nunca usa a de outro cliente.
+   */
+  @Post(':id/retry-conversion')
+  async retryConversion(@Param('id') id: string, @Req() req: any) {
+    const tenantId = this.tenant(req);
+    const lead = await this.leads.findScoped(Number(id), tenantId);
+
+    if (!lead.gclid) throw new BadRequestException('Lead sem GCLID — não há conversão pra reenviar');
+    if (!lead.convertedAt) throw new BadRequestException('Lead ainda não foi marcado como Ganho');
+    if (!lead.customerId) throw new BadRequestException('Lead sem conta (customerId) associada');
+
+    const { success, detail } = await this.attemptGoogleUpload(lead, lead.customerId);
+    return { ...lead, uploadSuccess: success, uploadDetail: detail, conversionUploadError: success ? null : detail };
   }
 }

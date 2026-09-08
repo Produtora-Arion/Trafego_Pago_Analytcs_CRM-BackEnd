@@ -156,8 +156,9 @@ export class LeadsService {
     return tenantId ? { id, customerId: tenantId } : { id };
   }
 
-  /** Busca um lead respeitando o isolamento por tenant, ou lança 404 */
-  private async findScoped(id: number, tenantId: string | null): Promise<Lead> {
+  /** Busca um lead respeitando o isolamento por tenant, ou lança 404 — pública porque
+   * o controller também usa (ex: reenvio manual da conversão pro Google Ads). */
+  async findScoped(id: number, tenantId: string | null): Promise<Lead> {
     const lead = await this.repo.findOne({ where: this.scopedWhere(id, tenantId) });
     if (!lead) throw new NotFoundException('Lead não encontrado');
     return lead;
@@ -200,7 +201,14 @@ export class LeadsService {
   }
 
   async markConversionUploaded(id: number): Promise<void> {
-    await this.repo.update(id, { conversionUploadedAt: new Date() });
+    await this.repo.update(id, { conversionUploadedAt: new Date(), conversionUploadError: null });
+  }
+
+  /** Registra o motivo de uma tentativa de envio ao Google Ads que falhou (ou
+   * nem chegou a ser tentada, ex: conta sem Conversion Action ID). Fica salvo
+   * até a próxima tentativa dar certo (markConversionUploaded limpa isso). */
+  async markConversionUploadFailed(id: number, reason: string): Promise<void> {
+    await this.repo.update(id, { conversionUploadError: reason });
   }
 
   /** Move o lead pra etapa fixa "Perdido", registrando o motivo escolhido. */
