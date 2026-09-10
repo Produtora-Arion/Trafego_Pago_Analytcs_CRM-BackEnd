@@ -103,6 +103,16 @@ export class Lead {
   @Column({ nullable: true })
   conversionUploadedAt: Date;
 
+  /**
+   * Motivo do envio pro Google Ads ter falhado (ou não ter sido tentado —
+   * ex: conta sem Conversion Action ID configurado). Null quando nunca
+   * houve tentativa, ou quando a última tentativa deu certo (limpo junto
+   * com conversionUploadedAt). Mensagem já é a versão segura pra exibir
+   * (nunca a resposta crua da API do Google) — pode aparecer pro cliente.
+   */
+  @Column({ nullable: true, type: 'text' })
+  conversionUploadError: string | null;
+
   /** Lembretes definidos manualmente — até 3 por lead. JSON: [{id, date, text}] */
   @Column({ nullable: true, type: 'text' })
   reminders: string;
