@@ -32,16 +32,26 @@ function safeCompare(a: string, b: string): boolean {
 type LeadOutcome = { kind: 'won' | 'lost' | 'pending'; stageLabel: string; lossReasonLabel?: string };
 
 const EVENT_OUTCOMES: Record<string, LeadOutcome> = {
+  // Compra aprovada / completa — venda de fato, card vai pra Ganho (+ manda pro Meta)
   PURCHASE_APPROVED: { kind: 'won', stageLabel: 'Ganho' },
   PURCHASE_COMPLETE: { kind: 'won', stageLabel: 'Ganho' },
+  // Situações que ainda pedem ação da Fabi (cobrar, recuperar) — não são nem
+  // venda ganha nem perdida ainda, por isso ganham etapa própria.
   PURCHASE_BILLET_PRINTED: { kind: 'pending', stageLabel: 'Aguardando Pagamento (Hotmart)' },
   PURCHASE_DELAYED: { kind: 'pending', stageLabel: 'Pagamento Atrasado (Hotmart)' },
-  PURCHASE_PROTEST: { kind: 'pending', stageLabel: 'Compra em Disputa (Hotmart)' },
+  PURCHASE_PROTEST: { kind: 'pending', stageLabel: 'Pedido de Reembolso (Hotmart)' },
   PURCHASE_OUT_OF_SHOPPING_CART: { kind: 'pending', stageLabel: 'Carrinho Abandonado (Hotmart)' },
+  // Venda que não vingou — card vai pra Perdido, já com o motivo certo.
   PURCHASE_CANCELED: { kind: 'lost', stageLabel: 'Perdido', lossReasonLabel: 'Cancelada (Hotmart)' },
   PURCHASE_REFUNDED: { kind: 'lost', stageLabel: 'Perdido', lossReasonLabel: 'Reembolsada (Hotmart)' },
   PURCHASE_CHARGEBACK: { kind: 'lost', stageLabel: 'Perdido', lossReasonLabel: 'Chargeback (Hotmart)' },
   PURCHASE_EXPIRED: { kind: 'lost', stageLabel: 'Perdido', lossReasonLabel: 'Boleto expirado (Hotmart)' },
+  SUBSCRIPTION_CANCELLATION: { kind: 'lost', stageLabel: 'Perdido', lossReasonLabel: 'Assinatura cancelada (Hotmart)' },
+  // Troca de plano, atualização de data de cobrança, primeiro acesso, módulo
+  // completo e dados logísticos ficam de fora de propósito — não são estados
+  // de negociação (a pessoa já é cliente ou é só um detalhe de conta), então
+  // não fazem sentido movendo o card entre etapas. Chegam aqui e são
+  // ignorados com segurança, igual qualquer evento não mapeado.
 };
 
 @Injectable()
