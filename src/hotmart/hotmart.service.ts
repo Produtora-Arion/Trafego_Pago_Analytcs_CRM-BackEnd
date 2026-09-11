@@ -5,6 +5,8 @@ import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { HotmartClickRef } from './hotmart-click-ref.entity';
 import { HotmartSale } from './hotmart-sale.entity';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
+import { LeadsService } from '../leads/leads.service';
+import { CrmStagesService } from '../crm-stages/crm-stages.service';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value.trim().toLowerCase()).digest('hex');
@@ -25,6 +27,8 @@ export class HotmartService {
     @InjectRepository(HotmartClickRef) private readonly clickRepo: Repository<HotmartClickRef>,
     @InjectRepository(HotmartSale) private readonly saleRepo: Repository<HotmartSale>,
     private readonly webhookConfig: WebhookConfigService,
+    private readonly leads: LeadsService,
+    private readonly crmStages: CrmStagesService,
   ) {}
 
   /**
@@ -83,6 +87,10 @@ export class HotmartService {
     const ref: string | null = purchase?.origin?.src ?? data?.origin?.src ?? null;
     const buyerName: string | null = buyer?.name ?? null;
     const buyerEmail: string | null = buyer?.email ?? null;
+    // Hotmart nem sempre manda telefone — quando manda, aparece num desses campos
+    // dependendo da versão do checkout; sem nenhum deles, o lead ainda entra só com e-mail.
+    const buyerPhone: string | null = buyer?.checkout_phone ?? buyer?.phone ?? null;
+    const productName: string | null = data?.product?.name ?? null;
 
     if (!transactionId) {
       this.logger.error(`[${customerId}] Webhook de compra aprovada sem ID de transação — payload inesperado, guardado bruto pra investigar.`);
@@ -127,7 +135,65 @@ export class HotmartService {
     }
 
     await this.saleRepo.save(sale);
-    return { ok: true, detail: `Venda ${transactionId} registrada — Meta: ${sale.metaSent ? 'enviado' : 'não enviado (' + sale.metaSentDetail + ')'}` };
+
+    // Além de registrar a venda (pra métricas) e mandar pro Meta (pra otimizar
+    // anúncio), cria/atualiza um card no CRM — pra dar acompanhamento pós-venda
+    // à compradora (onboarding, suporte etc.), não só números de dashboard.
+    let leadDetail = 'não vinculado';
+    try {
+      const lead = await this.linkToLead(customerId, {
+        buyerName, buyerEmail, buyerPhone, fbclid, channel, value, productName, transactionId,
+      });
+      leadDetail = lead ? `card #${lead.id} na etapa "${lead.status}"` : 'sem etapa "Ganho" configurada nesta conta';
+    } catch (err) {
+      this.logger.error(`[${customerId}] Falha ao vincular venda ${transactionId} a um lead no CRM`, (err as Error)?.stack);
+      leadDetail = 'erro ao vincular (veja o log)';
+    }
+
+    return {
+      ok: true,
+      detail: `Venda ${transactionId} registrada — Meta: ${sale.metaSent ? 'enviado' : 'não enviado (' + sale.metaSentDetail + ')'} — CRM: ${leadDetail}`,
+    };
+  }
+
+  /**
+   * Cria (ou reaproveita, se já existe pelo mesmo telefone/e-mail) o card da
+   * compradora no CRM, direto na etapa "Ganho" — é uma venda já confirmada,
+   * não um lead por qualificar, então não faz sentido nascer em "Novo".
+   * Sem etapa "Ganho" na conta (não deveria acontecer — findAll cria as 4
+   * etapas padrão na primeira chamada), não vincula e avisa no log.
+   */
+  private async linkToLead(
+    customerId: string,
+    params: {
+      buyerName: string | null; buyerEmail: string | null; buyerPhone: string | null;
+      fbclid: string | null; channel: string | null; value: number;
+      productName: string | null; transactionId: string;
+    },
+  ) {
+    const stages = await this.crmStages.findAll(customerId);
+    const wonStage = stages.find(s => s.kind === 'won');
+    if (!wonStage) return null;
+
+    const lead = await this.leads.upsertFromWebhook({
+      customerId,
+      name: params.buyerName ?? undefined,
+      email: params.buyerEmail ?? undefined,
+      phone: params.buyerPhone ?? undefined,
+      fbclid: params.fbclid ?? undefined,
+      utmSource: 'hotmart',
+      formChoice: params.productName ?? undefined,
+      status: wonStage.label,
+      stageId: wonStage.id,
+    });
+
+    // Só marca a conversão se este card ainda não tinha sido convertido —
+    // evita reescrever valor/data numa segunda compra da mesma pessoa
+    // (fica registrada na venda em hotmart_sales de qualquer forma).
+    if (!lead.convertedAt) {
+      await this.leads.markConverted(lead.id, params.value, customerId, '', null, wonStage.id, wonStage.label);
+    }
+    return lead;
   }
 
   /** Envia o evento de Compra real pro Meta via Conversions API (servidor a servidor). */
