@@ -146,8 +146,12 @@ export class TrackedUrlsController {
     @Query('type') type: 'click' | 'view' = 'click',
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('dimension') dimension: 'source' | 'campaign' = 'source',
   ) {
-    return this.service.getButtonMatrix(Number(id), type === 'view' ? 'view' : 'click', from, to);
+    return this.service.getButtonMatrix(
+      Number(id), type === 'view' ? 'view' : 'click', from, to,
+      dimension === 'campaign' ? 'campaign' : 'source',
+    );
   }
 
   @Get(':id/scroll')

@@ -14,6 +14,7 @@ const MAX_LABEL_LEN = 80;
 const MAX_HREF_LEN = 500;
 const MAX_FORM_DATA_LEN = 10_000;
 const DIRECT_LABEL = '(direto)';
+const NO_CAMPAIGN_LABEL = '(sem campanha)';
 const DEFAULT_BUTTON_LABEL = 'clique';
 
 function todayBrasilia(): string {
@@ -594,11 +595,21 @@ export class TrackedUrlsService {
    * Origem normalizada (minúsculo/sem espaço nas pontas), igual ao gráfico de
    * acesso por dia — evita "Instagram"/"instagram" virarem colunas diferentes.
    */
-  async getButtonMatrix(id: number, type: 'click' | 'view', from?: string, to?: string): Promise<TrackedUrlButtonMatrixCell[]> {
+  /**
+   * `dimension` escolhe o que cruza com o botão: 'source' (origem — Instagram,
+   * direto etc.) ou 'campaign' (o nome do anúncio/campanha em si — bem mais
+   * acionável, já que "Instagram" sozinho não diz qual criativo funcionou).
+   */
+  async getButtonMatrix(
+    id: number, type: 'click' | 'view', from?: string, to?: string,
+    dimension: 'source' | 'campaign' = 'source',
+  ): Promise<TrackedUrlButtonMatrixCell[]> {
+    const column = dimension === 'campaign' ? 'b.utmCampaign' : 'b.utmSource';
+    const fallback = dimension === 'campaign' ? NO_CAMPAIGN_LABEL : DIRECT_LABEL;
     const qb = this.buttonRepo
       .createQueryBuilder('b')
       .select(`LOWER(TRIM(b.label))`, 'labelKey')
-      .addSelect(`LOWER(TRIM(COALESCE(b.utmSource, '${DIRECT_LABEL}')))`, 'sourceKey')
+      .addSelect(`LOWER(TRIM(COALESCE(${column}, '${fallback}')))`, 'sourceKey')
       .addSelect('COUNT(*)', 'total')
       .where('b.trackedUrlId = :id', { id })
       .andWhere('b.type = :type', { type })
@@ -609,7 +620,7 @@ export class TrackedUrlsService {
     const rows = await qb.getRawMany();
     return rows.map(r => ({
       label: titleCase(r.labelKey),
-      source: r.sourceKey === DIRECT_LABEL ? DIRECT_LABEL : titleCase(r.sourceKey),
+      source: r.sourceKey === fallback ? fallback : titleCase(r.sourceKey),
       total: Number(r.total),
     }));
   }
