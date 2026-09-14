@@ -11,6 +11,7 @@ import { UpdateTrackedUrlDto } from './tracked-urls.dto';
 const MAX_VISITOR_ID_LEN = 100;
 const MAX_UTM_LEN = 150;
 const MAX_LABEL_LEN = 80;
+const MAX_HREF_LEN = 500;
 const MAX_FORM_DATA_LEN = 10_000;
 const DIRECT_LABEL = '(direto)';
 const DEFAULT_BUTTON_LABEL = 'clique';
@@ -42,6 +43,22 @@ function titleCase(s: string): string {
   return s.replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** Classifica pra onde um clique leva de verdade, a partir do href capturado
+ * pelo pixel e do domínio do site cadastrado. Ver comentário no tipo ClickDestination.
+ * Não presume que todo link externo é "venda" (pode ser WhatsApp, Instagram etc.) —
+ * só distingue "saiu do site" de "ficou na mesma página/site", que já resolve a
+ * confusão de botão-âncora sendo contado igual a botão-de-compra. */
+function classifyDestination(href: string | null, siteHostname: string | null): ClickDestination {
+  if (!href) return 'desconhecido';
+  try {
+    const target = new URL(href).hostname.replace(/^www\./, '');
+    if (!siteHostname) return target ? 'externo' : 'mesma-pagina';
+    return target === siteHostname ? 'mesma-pagina' : 'externo';
+  } catch {
+    return 'mesma-pagina'; // href relativo/âncora que não parseou como URL absoluta — mesmo domínio
+  }
+}
+
 export type TrackedUrlWithTotals = TrackedUrl & {
   totalAccess: number;
   totalUnique: number;
@@ -70,9 +87,19 @@ export type TrackedUrlUtmDayRow = {
   totalAccess: number;
 };
 
+/**
+ * Onde um clique leva de verdade, classificado a partir do href capturado:
+ * - 'externo'      → sai do site (outro domínio — ex: checkout da Hotmart, WhatsApp, Instagram)
+ * - 'mesma-pagina' → fica no mesmo site (ex: "#comprar" rolando a própria página)
+ * - 'desconhecido' → clique registrado antes dessa captura existir, sem href salvo
+ */
+export type ClickDestination = 'externo' | 'mesma-pagina' | 'desconhecido';
+
 export type TrackedUrlClickRow = {
   label: string;
   totalClick: number;
+  /** Destino mais frequente desse botão no período — undefined se a URL do site não estiver cadastrada. */
+  destination?: ClickDestination;
 };
 
 export type TrackedUrlClickDayRow = {
@@ -249,9 +276,9 @@ export class TrackedUrlsService {
   /** Clique num botão/CTA — label identifica QUAL botão (ex: "whatsapp", "agendar"). */
   async recordClick(
     slug: string, label?: string, visitorId?: string, pos?: string,
-    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string, href?: string,
   ): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'click', label, visitorId, pos, utmSource, utmMedium, utmCampaign);
+    return this.recordButtonEvent(slug, 'click', label, visitorId, pos, utmSource, utmMedium, utmCampaign, href);
   }
 
   /** Botão apareceu na tela da pessoa (impressão) — mesmo label/visitorId do clique, pra dar CTR e único. */
@@ -278,7 +305,7 @@ export class TrackedUrlsService {
 
   private async recordButtonEvent(
     slug: string, type: 'click' | 'view' | 'scroll', label?: string, visitorId?: string, pos?: string,
-    utmSource?: string, utmMedium?: string, utmCampaign?: string,
+    utmSource?: string, utmMedium?: string, utmCampaign?: string, href?: string,
   ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
@@ -298,6 +325,7 @@ export class TrackedUrlsService {
       utmSource: cleanUtm(utmSource),
       utmMedium: cleanUtm(utmMedium),
       utmCampaign: cleanUtm(utmCampaign),
+      href: href?.trim().slice(0, MAX_HREF_LEN) || null,
     });
     await this.buttonRepo.save(event);
     return true;
@@ -386,10 +414,51 @@ export class TrackedUrlsService {
     }));
   }
 
-  /** Total de cliques por botão (label), no período. */
+  /** Total de cliques por botão (label), no período — junto com pra onde cada
+   * botão costuma levar de verdade (venda, outra página, ou só a mesma página). */
   async getClickBreakdown(id: number, from?: string, to?: string): Promise<TrackedUrlClickRow[]> {
-    const rows = await this.buttonBreakdown(id, 'click', from, to);
-    return rows.map(r => ({ label: r.label, totalClick: r.total }));
+    const [rows, destinationByLabel] = await Promise.all([
+      this.buttonBreakdown(id, 'click', from, to),
+      this.getClickDestinationByLabel(id, from, to),
+    ]);
+    return rows.map(r => ({ label: r.label, totalClick: r.total, destination: destinationByLabel.get(r.label) }));
+  }
+
+  /** Hostname do site cadastrado — usado só pra classificar destino de clique (venda x mesma página). */
+  private async siteHostname(id: number): Promise<string | null> {
+    const entry = await this.repo.findOne({ where: { id } });
+    if (!entry?.url) return null;
+    try { return new URL(entry.url).hostname.replace(/^www\./, ''); } catch { return null; }
+  }
+
+  /** Destino mais frequente de cada botão no período, já classificado. Href nulo
+   * (clique antigo, de antes dessa captura existir, ou elemento sem link) vira 'desconhecido'. */
+  private async getClickDestinationByLabel(id: number, from?: string, to?: string): Promise<Map<string, ClickDestination>> {
+    const hostname = await this.siteHostname(id);
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect('b.href', 'href')
+      .addSelect('COUNT(*)', 'cnt')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'click'`)
+      .groupBy('"labelKey"')
+      .addGroupBy('b.href')
+      .orderBy('"labelKey"', 'ASC')
+      .addOrderBy('cnt', 'DESC');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany<{ labelKey: string; href: string | null; cnt: string }>();
+
+    // Chave em titleCase — mesma transformação que buttonBreakdown() aplica no
+    // label antes de devolver pro chamador, senão o Map nunca bate no merge.
+    const out = new Map<string, ClickDestination>();
+    for (const r of rows) {
+      const key = titleCase(r.labelKey);
+      if (out.has(key)) continue; // já pegou o href mais frequente desse label (primeira linha, maior cnt)
+      out.set(key, classifyDestination(r.href, hostname));
+    }
+    return out;
   }
 
   /** Cliques por dia, quebrado por botão — pra ver qual CTA está performando melhor dia a dia. */
