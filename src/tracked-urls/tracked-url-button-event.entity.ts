@@ -44,4 +44,15 @@ export class TrackedUrlButtonEvent {
 
   @Column({ type: 'varchar', nullable: true })
   utmCampaign: string | null;
+
+  /**
+   * Destino real do clique (ex: "https://pay.hotmart.com/..." ou a própria
+   * página + "#comprar") — capturado do .href resolvido pelo navegador, sem
+   * precisar marcar nada a mais no HTML. Distingue automaticamente um botão
+   * que leva pra outra página/venda de um que só rola a mesma página. Null em
+   * cliques registrados antes dessa coluna existir, ou em elementos sem href
+   * (ex: um <button> sem link).
+   */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  href: string | null;
 }

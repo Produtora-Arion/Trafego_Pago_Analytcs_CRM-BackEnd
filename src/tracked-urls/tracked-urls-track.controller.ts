@@ -99,6 +99,11 @@ export class TrackedUrlsTrackController {
     var params = Object.assign({ label: label, vid: getVisitorId() }, getUtms());
     var pos = el ? elPos(el) : undefined;
     if (pos !== undefined) params.pos = pos;
+    // .href (não getAttribute) já vem resolvido pelo navegador — um <a href="#comprar">
+    // vira a URL da própria página + #comprar, então dá pra distinguir de um link de
+    // verdade (ex: checkout) automaticamente, sem precisar marcar nada a mais no HTML.
+    var href = (el && el.href) ? String(el.href).slice(0, 500) : undefined;
+    if (href) params.href = href;
     ping('click', params);
   }
 
@@ -235,10 +240,11 @@ export class TrackedUrlsTrackController {
     @Query('utm_source') utmSource: string | undefined,
     @Query('utm_medium') utmMedium: string | undefined,
     @Query('utm_campaign') utmCampaign: string | undefined,
+    @Query('href') href: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordClick(slug, label, vid, pos, utmSource, utmMedium, utmCampaign);
+    await this.service.recordClick(slug, label, vid, pos, utmSource, utmMedium, utmCampaign, href);
     return res.status(204).send();
   }
 
