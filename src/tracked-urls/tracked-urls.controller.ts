@@ -74,6 +74,18 @@ export class TrackedUrlsController {
     return this.service.getClickBreakdown(Number(id), from, to);
   }
 
+  /** Visitante único por botão, no período — base pro "Total Único" ajustável do
+   * relatório: o front soma a união (não a soma simples) de quem clicou em
+   * qualquer um dos botões que a pessoa selecionar, sem repetir quem clicou em mais de um. */
+  @Get(':id/clicks-visitors')
+  getClickVisitors(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.service.getClickVisitors(Number(id), from, to);
+  }
+
   @Get(':id/clicks-daily')
   getClickBreakdownByDay(
     @Param('id') id: string,
