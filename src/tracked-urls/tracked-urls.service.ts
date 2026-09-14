@@ -102,6 +102,14 @@ export type TrackedUrlClickRow = {
   destination?: ClickDestination;
 };
 
+/** Um par (botão, visitante) — base pro front montar a união de "pessoas únicas
+ * que clicaram em qualquer um dos botões selecionados", sem repetir quem clicou
+ * em mais de um. Cada par aparece só uma vez, mesmo com vários cliques. */
+export type TrackedUrlClickVisitorRow = {
+  label: string;
+  visitorId: string;
+};
+
 export type TrackedUrlClickDayRow = {
   date: string;
   label: string;
@@ -459,6 +467,23 @@ export class TrackedUrlsService {
       out.set(key, classifyDestination(r.href, hostname));
     }
     return out;
+  }
+
+  /** Par (botão, visitante) único no período — pro front montar a união de quem
+   * clicou em qualquer um dos botões que a pessoa escolher, sem repetir gente. */
+  async getClickVisitors(id: number, from?: string, to?: string): Promise<TrackedUrlClickVisitorRow[]> {
+    const qb = this.buttonRepo
+      .createQueryBuilder('b')
+      .select(`LOWER(TRIM(b.label))`, 'labelKey')
+      .addSelect('b.visitorId', 'visitorId')
+      .where('b.trackedUrlId = :id', { id })
+      .andWhere(`b.type = 'click'`)
+      .groupBy('"labelKey"')
+      .addGroupBy('b.visitorId');
+    if (from) qb.andWhere('b.date >= :from', { from });
+    if (to) qb.andWhere('b.date <= :to', { to });
+    const rows = await qb.getRawMany<{ labelKey: string; visitorId: string }>();
+    return rows.map(r => ({ label: titleCase(r.labelKey), visitorId: r.visitorId }));
   }
 
   /** Cliques por dia, quebrado por botão — pra ver qual CTA está performando melhor dia a dia. */
