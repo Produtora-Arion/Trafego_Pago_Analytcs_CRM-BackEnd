@@ -463,6 +463,66 @@ export class GoogleAdsService implements OnModuleInit {
   }
 
   /**
+   * Termos de pesquisa reais que dispararam o anúncio — diferente da
+   * palavra-chave configurada, esse é o texto que a pessoa de fato digitou
+   * no Google. Essencial pra achar buscas irrelevantes que uma
+   * correspondência ampla/frase acabou capturando (ex: "meu inss" gastando
+   * dinheiro numa campanha de advocacia previdenciária, caso Patricia).
+   */
+  async getSearchTerms(customerId: string, campaignId: string, dateRange = 'LAST_30_DAYS') {
+    const customer = this.getCustomer(customerId);
+
+    const rows = await customer.query(`
+      SELECT
+        search_term_view.search_term,
+        search_term_view.status,
+        segments.keyword.info.text,
+        segments.keyword.info.match_type,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.ctr,
+        metrics.conversions
+      FROM search_term_view
+      WHERE campaign.id = ${this.numId(campaignId, 'campaignId')}
+        AND segments.date ${this.buildDateFilter(dateRange)}
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 500
+    `);
+
+    return rows.map((r) => {
+      const clicks = Number(r.metrics.clicks);
+      const conversions = Number(r.metrics.conversions);
+      return {
+        termo: r.search_term_view.search_term,
+        status: this.decodeSearchTermStatus(r.search_term_view.status),
+        palavra_chave_disparada: r.segments.keyword?.info?.text ?? null,
+        tipo_correspondencia: r.segments.keyword?.info?.match_type
+          ? this.decodeMatchType(r.segments.keyword.info.match_type)
+          : null,
+        impressoes: Number(r.metrics.impressions),
+        cliques: clicks,
+        custo: `R$ ${(Number(r.metrics.cost_micros) / 1_000_000).toFixed(2)}`,
+        ctr: `${(isNaN(Number(r.metrics.ctr)) ? 0 : Number(r.metrics.ctr) * 100).toFixed(2)}%`,
+        conversoes: conversions,
+        custo_por_conversao:
+          conversions > 0
+            ? `R$ ${((Number(r.metrics.cost_micros) / 1_000_000) / conversions).toFixed(2)}`
+            : null,
+      };
+    });
+  }
+
+  private decodeSearchTermStatus(v: unknown): string {
+    // SearchTermTargetingStatusEnum: ADDED=2, EXCLUDED=3, ADDED_EXCLUDED=4, NONE=5
+    const n = Number(v);
+    if (n === 2) return 'ADICIONADA';
+    if (n === 3) return 'EXCLUIDA';
+    if (n === 4) return 'ADICIONADA_E_EXCLUIDA';
+    return 'NENHUMA';
+  }
+
+  /**
    * Descobre qual palavra-chave gerou cada clique (gclid) — usado pra cruzar
    * lead real do CRM com a keyword que trouxe ele, e assim enxergar quais
    * keywords são "fantasma" (custam mas não geram lead de verdade), já que
