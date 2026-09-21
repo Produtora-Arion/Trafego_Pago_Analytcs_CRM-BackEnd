@@ -60,6 +60,24 @@ export class WebhookConfigController {
     return this.service.updateConversionActionId(customerId, conversionActionId);
   }
 
+  /** Ação de conversão SECUNDÁRIA "formulário enviado" — disparada na criação do lead. */
+  @Patch(':customerId/conversion-action-form')
+  updateFormConversionAction(
+    @Param('customerId') customerId: string,
+    @Body('conversionActionId') conversionActionId: string,
+  ) {
+    return this.service.updateFormSubmittedConversionActionId(customerId, conversionActionId);
+  }
+
+  /** Ação de conversão SECUNDÁRIA "perdido" — disparada quando o lead entra na etapa fixa "Perdido". */
+  @Patch(':customerId/conversion-action-lost')
+  updateLostConversionAction(
+    @Param('customerId') customerId: string,
+    @Body('conversionActionId') conversionActionId: string,
+  ) {
+    return this.service.updateLostConversionActionId(customerId, conversionActionId);
+  }
+
   /** Token do Meta (Graph API) e conta de anúncio padrão desta conta — nunca compartilhado entre clientes. */
   @Patch(':customerId/meta')
   updateMetaConfig(

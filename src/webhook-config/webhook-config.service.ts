@@ -177,6 +177,53 @@ export class WebhookConfigService {
   }
 
   /**
+   * IDs das ações de conversão SECUNDÁRIAS (não competem pela otimização do
+   * lance) que dão mais contexto de funil pro Google: "formulário enviado"
+   * (na criação do lead) e "perdido" (ao entrar na etapa fixa "Perdido").
+   * Mesmo motivo do caso Patricia — mais sinal pra um volume pequeno decidir
+   * melhor, sem misturar com a meta de "Ganho".
+   */
+  async getFormSubmittedConversionActionId(customerId: string): Promise<string | null> {
+    const entry = await this.repo.findOne({ where: { customerId } });
+    return entry?.formSubmittedConversionActionId ?? null;
+  }
+
+  async updateFormSubmittedConversionActionId(customerId: string, conversionActionId: string): Promise<WebhookToken> {
+    const existing = await this.repo.findOne({ where: { customerId } });
+    if (existing) {
+      existing.formSubmittedConversionActionId = conversionActionId;
+      return this.toPublic(await this.repo.save(existing));
+    }
+    const entry = this.repo.create({
+      customerId,
+      token: this.generateToken(),
+      slug: this.generateSlug(customerId),
+      formSubmittedConversionActionId: conversionActionId,
+    });
+    return this.toPublic(await this.repo.save(entry));
+  }
+
+  async getLostConversionActionId(customerId: string): Promise<string | null> {
+    const entry = await this.repo.findOne({ where: { customerId } });
+    return entry?.lostConversionActionId ?? null;
+  }
+
+  async updateLostConversionActionId(customerId: string, conversionActionId: string): Promise<WebhookToken> {
+    const existing = await this.repo.findOne({ where: { customerId } });
+    if (existing) {
+      existing.lostConversionActionId = conversionActionId;
+      return this.toPublic(await this.repo.save(existing));
+    }
+    const entry = this.repo.create({
+      customerId,
+      token: this.generateToken(),
+      slug: this.generateSlug(customerId),
+      lostConversionActionId: conversionActionId,
+    });
+    return this.toPublic(await this.repo.save(entry));
+  }
+
+  /**
    * Credenciais do Meta (Graph API) desta conta — cada cliente tem seu próprio
    * Business Manager, então o token nunca é compartilhado entre clientes
    * (diferente do Google Ads, que usa uma MCC central). Retorna null se o

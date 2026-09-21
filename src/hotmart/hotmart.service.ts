@@ -241,7 +241,7 @@ export class HotmartService {
     }
     if (!stage) return null;
 
-    const lead = await this.leads.upsertFromWebhook({
+    const { lead } = await this.leads.upsertFromWebhook({
       customerId,
       name: params.buyerName ?? undefined,
       email: params.buyerEmail ?? undefined,

@@ -5,9 +5,10 @@ import { LeadWebhookController } from './lead-webhook.controller';
 import { LeadsModule } from '../leads/leads.module';
 import { WebhookConfigModule } from '../webhook-config/webhook-config.module';
 import { CrmStagesModule } from '../crm-stages/crm-stages.module';
+import { GoogleAdsModule } from '../google-ads/google-ads.module';
 
 @Module({
-  imports: [LeadsModule, WebhookConfigModule, CrmStagesModule],
+  imports: [LeadsModule, WebhookConfigModule, CrmStagesModule, GoogleAdsModule],
   controllers: [WhatsAppController, LeadWebhookController],
   providers: [WhatsAppService],
 })

@@ -68,6 +68,34 @@ export class LeadsController {
     return { success: false, detail: genericDetail };
   }
 
+  /**
+   * Envia uma conversão SECUNDÁRIA (formulário enviado / perdido) — mesmo
+   * mecanismo do "Ganho" acima, mas melhor-esforço: não grava status no
+   * lead (essas colunas são só pro fluxo principal de conversão), nunca
+   * lança erro pro chamador. Sem gclid ou sem o ID configurado, simplesmente
+   * não faz nada — é sinal a mais pro Google, não algo crítico de negócio.
+   */
+  private async uploadSecondaryConversion(
+    lead: Lead,
+    customerId: string,
+    conversionActionId: string | null,
+  ): Promise<void> {
+    if (!conversionActionId || !lead.gclid) return;
+    try {
+      await this.googleAds.uploadOfflineConversion(
+        customerId,
+        lead.gclid,
+        conversionActionId,
+        new Date(),
+        0,
+        lead.phone,
+      );
+    } catch (err) {
+      // best-effort — nunca deve derrubar o fluxo principal (criar lead / marcar perdido)
+      console.error('[uploadSecondaryConversion] falha ao subir conversão secundária:', err);
+    }
+  }
+
   /** Cliente sempre força o próprio customerId (nunca confia no query param); admin pode listar tudo ou filtrar. */
   @Get()
   findAll(@Query('customerId') customerId: string | undefined, @Req() req: any) {
@@ -187,10 +215,20 @@ export class LeadsController {
 
   /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
   @Post()
-  create(@Body() body: CreateLeadDto, @Req() req: any) {
+  async create(@Body() body: CreateLeadDto, @Req() req: any) {
     const tenantId = this.tenant(req);
     if (tenantId) body.customerId = tenantId;
-    return this.leads.upsertFromWebhook(body);
+    const { lead, isNew } = await this.leads.upsertFromWebhook(body);
+
+    // Conversão secundária "formulário enviado" — só na primeira vez que esta
+    // pessoa aparece (isNew), nunca de novo em eventos subsequentes dela.
+    const customerId = lead.customerId;
+    if (isNew && customerId) {
+      const formActionId = await this.webhookConfig.getFormSubmittedConversionActionId(customerId);
+      void this.uploadSecondaryConversion(lead, customerId, formActionId);
+    }
+
+    return lead;
   }
 
   @Delete(':id')
@@ -245,7 +283,20 @@ export class LeadsController {
     const reason = await this.lossReasons.findById(Number(lossReasonId), tenantId);
     if (!reason.active) throw new BadRequestException('Este motivo está desativado — escolha outro');
 
-    return this.leads.markLost(Number(id), stage.id, stage.label, reason.id, tenantId);
+    const lead = await this.leads.markLost(Number(id), stage.id, stage.label, reason.id, tenantId);
+
+    // Conversão secundária "Lead Desqualificado" — só dispara quando o
+    // motivo é um dos 2 fixos ("Fantasma" ou "Lead Desqualificado", ver
+    // LossReasonsService). Um lead perdido por motivo de negócio legítimo
+    // (preço, não se enquadra, documentação, não respondeu) é tráfego bom
+    // que só não fechou — reportar isso ensinaria o algoritmo a evitar
+    // tráfego de qualidade só porque a taxa de fechamento não é 100%.
+    if (lead.customerId && (reason.kind === 'fantasma' || reason.kind === 'desqualificado')) {
+      const lostActionId = await this.webhookConfig.getLostConversionActionId(lead.customerId);
+      await this.uploadSecondaryConversion(lead, lead.customerId, lostActionId);
+    }
+
+    return lead;
   }
 
   @Post(':id/convert')
