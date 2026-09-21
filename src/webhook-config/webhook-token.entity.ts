@@ -36,6 +36,22 @@ export class WebhookToken {
   metaAdAccountId: string | null;
 
   /**
+   * ID da ação de conversão (secundária, não-biddable) que registra "lead
+   * enviou o formulário" — disparada na criação do lead, dá mais contexto de
+   * funil pro Google sem competir com "Ganho" (conversionActionId acima) pela
+   * otimização do lance. Ver caso Patricia: motivo de ter as duas.
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  formSubmittedConversionActionId: string | null;
+
+  /**
+   * ID da ação de conversão (secundária, não-biddable) que registra "lead foi
+   * perdido" — disparada quando o lead entra na etapa fixa "Perdido".
+   */
+  @Column({ nullable: true, type: 'varchar' })
+  lostConversionActionId: string | null;
+
+  /**
    * Nome de exibição — só é usado por clientes "só Meta" (sem conta no Google
    * Ads da MCC), já que pra esses não existe nome nenhum vindo de lá. Clientes
    * que têm Google Ads continuam mostrando o nome da conta do Google.

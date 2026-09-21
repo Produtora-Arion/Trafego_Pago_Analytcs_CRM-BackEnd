@@ -30,7 +30,9 @@ describe('LeadsController — isolamento multi-tenant', () => {
   beforeEach(async () => {
     leadsService = {
       findAll: jest.fn().mockResolvedValue([]),
-      upsertFromWebhook: jest.fn().mockImplementation((dto) => Promise.resolve(dto)),
+      // isNew:false pra estes testes (de isolamento multi-tenant) não entrarem
+      // no fluxo de conversão secundária "formulário enviado" — irrelevante aqui.
+      upsertFromWebhook: jest.fn().mockImplementation((dto) => Promise.resolve({ lead: dto, isNew: false })),
     };
 
     const module: TestingModule = await Test.createTestingModule({

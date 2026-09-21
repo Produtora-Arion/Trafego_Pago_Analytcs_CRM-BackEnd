@@ -2,8 +2,10 @@ import { Controller, Post, Body, Param, Req, Res, Options, Logger } from '@nestj
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { LeadsService, CreateLeadDto } from '../leads/leads.service';
+import { Lead } from '../leads/lead.entity';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
+import { GoogleAdsService } from '../google-ads/google-ads.service';
 
 /** Campos reconhecidos do payload — o restante vai para extraData */
 const KNOWN_FIELDS = new Set([
@@ -41,7 +43,26 @@ export class LeadWebhookController {
     private readonly leads: LeadsService,
     private readonly webhookConfig: WebhookConfigService,
     private readonly crmStages: CrmStagesService,
+    private readonly googleAds: GoogleAdsService,
   ) {}
+
+  /**
+   * Conversão SECUNDÁRIA "formulário enviado" — melhor-esforço, nunca lança
+   * erro pro chamador (não pode derrubar a resposta do webhook público).
+   * Mesmo mecanismo do "Ganho", mas sem gravar status no lead.
+   */
+  private async uploadSecondaryConversion(
+    lead: Lead,
+    customerId: string,
+    conversionActionId: string | null,
+  ): Promise<void> {
+    if (!conversionActionId || !lead.gclid) return;
+    try {
+      await this.googleAds.uploadOfflineConversion(customerId, lead.gclid, conversionActionId, new Date(), 0, lead.phone);
+    } catch (err) {
+      this.logger.error('Falha ao subir conversão secundária "formulário enviado"', err);
+    }
+  }
 
   @SkipThrottle()
   @Options(':slug')
@@ -139,8 +160,16 @@ export class LeadWebhookController {
     };
 
     try {
-      const lead = await this.leads.upsertFromWebhook(dto);
+      const { lead, isNew } = await this.leads.upsertFromWebhook(dto);
       this.logger.log(`Lead recebido via webhook ${slug} → #${lead.id} (${phone || email})`);
+
+      // Conversão secundária "formulário enviado" — só na primeira vez que
+      // esta pessoa aparece, e não bloqueia a resposta do webhook (fire-and-forget).
+      if (isNew && lead.customerId) {
+        const formActionId = await this.webhookConfig.getFormSubmittedConversionActionId(lead.customerId);
+        void this.uploadSecondaryConversion(lead, lead.customerId, formActionId);
+      }
+
       return res.status(201).json({ success: true, id: lead.id });
     } catch (err) {
       this.logger.error(`Webhook ${slug}: erro ao salvar lead`, err?.stack);

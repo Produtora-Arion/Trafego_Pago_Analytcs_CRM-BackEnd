@@ -117,7 +117,14 @@ export class LeadsService {
     return null;
   }
 
-  async upsertFromWebhook(data: CreateLeadDto): Promise<Lead> {
+  /**
+   * `isNew` diz se este lead acabou de nascer agora (nunca existia antes) —
+   * usado pelo controller pra disparar a conversão secundária "formulário
+   * enviado" só uma vez por pessoa, nunca de novo a cada mensagem/evento
+   * subsequente que passa por aqui (WhatsApp, Hotmart etc. também usam este
+   * método pra upsert, não só o webhook de formulário).
+   */
+  async upsertFromWebhook(data: CreateLeadDto): Promise<{ lead: Lead; isNew: boolean }> {
     const existing = await this.findDuplicate(data);
     if (existing) {
       // Preenche campos que o lead ainda não tinha (não sobrescreve dados existentes)
@@ -134,16 +141,16 @@ export class LeadsService {
           changed = true;
         }
       }
-      if (changed) return this.repo.save(existing);
-      return existing;
+      const lead = changed ? await this.repo.save(existing) : existing;
+      return { lead, isNew: false };
     }
 
     const lead = this.repo.create({ ...data, status: data.status || 'Novo', statusChangedAt: new Date() });
-    return this.repo.save(lead);
+    return { lead: await this.repo.save(lead), isNew: true };
   }
 
   // Mantém compatibilidade com WhatsApp webhook
-  async upsertFromWhatsApp(phone: string, gclid: string | null, firstMessage: string): Promise<Lead> {
+  async upsertFromWhatsApp(phone: string, gclid: string | null, firstMessage: string): Promise<{ lead: Lead; isNew: boolean }> {
     return this.upsertFromWebhook({ phone, gclid: gclid ?? undefined, firstMessage });
   }
 
