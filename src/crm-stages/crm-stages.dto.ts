@@ -5,14 +5,12 @@ export class CreateCrmStageDto {
   @IsOptional() @IsString() customerId?: string;
   @IsString() @MaxLength(60) label: string;
   @IsHexColor() color: string;
-  @IsOptional() @IsBoolean() triggersConversion?: boolean;
   @IsOptional() @IsBoolean() isEntryStage?: boolean;
 }
 
 export class UpdateCrmStageDto {
   @IsOptional() @IsString() @MaxLength(60) label?: string;
   @IsOptional() @IsHexColor() color?: string;
-  @IsOptional() @IsBoolean() triggersConversion?: boolean;
   @IsOptional() @IsBoolean() isEntryStage?: boolean;
 }
 

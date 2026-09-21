@@ -25,9 +25,6 @@ export class CrmStage {
   @Column({ default: 0 })
   position: number;
 
-  @Column({ default: false })
-  triggersConversion: boolean;
-
   /** Etapa que recebe novos leads do webhook (só uma por cliente) */
   @Column({ default: false })
   isEntryStage: boolean;

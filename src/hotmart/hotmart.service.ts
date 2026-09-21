@@ -237,7 +237,7 @@ export class HotmartService {
 
     // Etapa pendente ainda não existe nesta conta — cria agora, no fim do board.
     if (!stage && outcome.kind === 'pending') {
-      stage = await this.crmStages.create(customerId, outcome.stageLabel, '#f59e0b', false, false);
+      stage = await this.crmStages.create(customerId, outcome.stageLabel, '#f59e0b', false);
     }
     if (!stage) return null;
 
