@@ -46,7 +46,10 @@ export class WebhookToken {
 
   /**
    * ID da ação de conversão (secundária, não-biddable) que registra "lead foi
-   * perdido" — disparada quando o lead entra na etapa fixa "Perdido".
+   * perdido" — disparada só quando o motivo da perda é "Fantasma" (lead
+   * falso/sem valor real). Perda por motivo de negócio legítimo (preço, não
+   * se enquadra, documentação) não dispara — é tráfego bom que só não
+   * fechou, reportar isso ensinaria o Google a evitar tráfego de qualidade.
    */
   @Column({ nullable: true, type: 'varchar' })
   lostConversionActionId: string | null;

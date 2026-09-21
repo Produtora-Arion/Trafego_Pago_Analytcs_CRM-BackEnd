@@ -285,9 +285,13 @@ export class LeadsController {
 
     const lead = await this.leads.markLost(Number(id), stage.id, stage.label, reason.id, tenantId);
 
-    // Conversão secundária "perdido" — mesmo espírito do "formulário enviado":
-    // só dá mais contexto pro Google, nunca compete pela otimização do lance.
-    if (lead.customerId) {
+    // Conversão secundária "perdido" — só reporta pro Google quando o motivo
+    // é "Fantasma" (lead falso/sem valor real: número errado, spam, nunca
+    // respondeu). Um lead perdido por motivo de negócio legítimo (preço, não
+    // se enquadra, documentação) é tráfego bom que só não fechou — reportar
+    // isso como "perdido" ensinaria o algoritmo a evitar tráfego de
+    // qualidade só porque a taxa de fechamento não é 100%.
+    if (lead.customerId && reason.label.trim().toLowerCase() === 'fantasma') {
       const lostActionId = await this.webhookConfig.getLostConversionActionId(lead.customerId);
       await this.uploadSecondaryConversion(lead, lead.customerId, lostActionId);
     }
