@@ -93,6 +93,15 @@ export class GoogleAdsController {
     return this.googleAds.getKeywordPerformance(customerId, campaignId, period);
   }
 
+  @Get(':customerId/campaigns/:campaignId/search-terms')
+  getSearchTerms(
+    @Param('customerId') customerId: string,
+    @Param('campaignId') campaignId: string,
+    @Query('period') period = 'LAST_30_DAYS',
+  ) {
+    return this.googleAds.getSearchTerms(customerId, campaignId, period);
+  }
+
   @Get(':customerId/campaigns/:campaignId/negatives')
   getNegatives(
     @Param('customerId') customerId: string,
