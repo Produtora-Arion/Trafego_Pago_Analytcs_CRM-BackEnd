@@ -102,6 +102,15 @@ export class GoogleAdsController {
     return this.googleAds.getSearchTerms(customerId, campaignId, period);
   }
 
+  @Get(':customerId/conversion-actions-priority')
+  getConversionActionsPriority(
+    @Param('customerId') customerId: string,
+    @Query('ids') ids: string,
+  ) {
+    const idList = (ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return this.googleAds.getConversionActionsPriority(customerId, idList);
+  }
+
   @Get(':customerId/campaigns/:campaignId/negatives')
   getNegatives(
     @Param('customerId') customerId: string,

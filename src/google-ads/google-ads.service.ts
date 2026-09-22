@@ -513,6 +513,40 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  /**
+   * Pra cada conversion action ID vinculado no webhook (Ganho / Lead Qualificado /
+   * Lead Desqualificado), diz se ele é o que hoje comanda a otimização de lance no
+   * Google Ads (`primary_for_goal`). Qual dos três é o "primário" varia por cliente —
+   * não é sempre o Ganho: contas com volume de Ganho baixo demais pro Smart Bidding
+   * aprender costumam usar Lead Qualificado como primário em vez disso. Usado só pra
+   * rotular o painel de Webhooks corretamente — não decide nem altera nada sozinho.
+   */
+  async getConversionActionsPriority(
+    customerId: string,
+    ids: string[],
+  ): Promise<Record<string, { nome: string; primaria: boolean } | null>> {
+    const result: Record<string, { nome: string; primaria: boolean } | null> = {};
+    for (const id of ids) result[id] = null;
+
+    const validIds = ids.filter((id) => /^\d+$/.test(id));
+    if (validIds.length === 0) return result;
+
+    const customer = this.getCustomer(customerId);
+    const rows = await customer.query(`
+      SELECT conversion_action.id, conversion_action.name, conversion_action.primary_for_goal
+      FROM conversion_action
+      WHERE conversion_action.id IN (${validIds.join(',')})
+    `);
+    for (const r of rows) {
+      const id = String(r.conversion_action.id);
+      result[id] = {
+        nome: r.conversion_action.name,
+        primaria: !!r.conversion_action.primary_for_goal,
+      };
+    }
+    return result;
+  }
+
   private decodeSearchTermStatus(v: unknown): string {
     // SearchTermTargetingStatusEnum: ADDED=2, EXCLUDED=3, ADDED_EXCLUDED=4, NONE=5
     const n = Number(v);
