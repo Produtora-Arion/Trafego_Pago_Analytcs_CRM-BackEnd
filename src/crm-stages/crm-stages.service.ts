@@ -16,10 +16,10 @@ function generateStageCode(): string {
 }
 
 const DEFAULT_STAGES = [
-  { label: 'Novo',           color: '#0ea5e9', position: 0, triggersConversion: false, isEntryStage: true,  kind: 'default' as const },
-  { label: 'Em Atendimento', color: '#f59e0b', position: 1, triggersConversion: false, isEntryStage: false, kind: 'default' as const },
-  { label: 'Ganho',          color: '#22c55e', position: 2, triggersConversion: true,  isEntryStage: false, kind: 'won' as const },
-  { label: 'Perdido',        color: '#ef4444', position: 3, triggersConversion: false, isEntryStage: false, kind: 'lost' as const },
+  { label: 'Novo',           color: '#0ea5e9', position: 0, isEntryStage: true,  kind: 'default' as const },
+  { label: 'Em Atendimento', color: '#f59e0b', position: 1, isEntryStage: false, kind: 'default' as const },
+  { label: 'Ganho',          color: '#22c55e', position: 2, isEntryStage: false, kind: 'won' as const },
+  { label: 'Perdido',        color: '#ef4444', position: 3, isEntryStage: false, kind: 'lost' as const },
 ];
 
 @Injectable()
@@ -84,27 +84,25 @@ export class CrmStagesService {
     customerId: string,
     label: string,
     color: string,
-    triggersConversion: boolean,
     isEntryStage = false,
   ): Promise<CrmStage> {
     const max = await this.stagesRepo.maximum('position', { customerId }) ?? -1;
     if (isEntryStage) await this.clearEntryStage(customerId);
-    const stage = this.stagesRepo.create({ customerId, label, color, position: (max as number) + 1, triggersConversion, isEntryStage, code: generateStageCode() });
+    const stage = this.stagesRepo.create({ customerId, label, color, position: (max as number) + 1, isEntryStage, code: generateStageCode() });
     return this.stagesRepo.save(stage);
   }
 
   async update(
     id: number,
-    data: { label?: string; color?: string; triggersConversion?: boolean; isEntryStage?: boolean },
+    data: { label?: string; color?: string; isEntryStage?: boolean },
     tenantId: string | null,
   ): Promise<CrmStage> {
     const where = tenantId ? { id, customerId: tenantId } : { id };
     const stage = await this.stagesRepo.findOne({ where });
     if (!stage) throw new NotFoundException('Etapa não encontrada');
 
-    // Ganho/Perdido são colunas fixas do funil: nome, disparo de conversão
-    // (sempre ligado em Ganho) e etapa de entrada não podem ser alterados.
-    // Cor continua livre — não faz diferença estrutural nenhuma.
+    // Ganho/Perdido são colunas fixas do funil: nome e etapa de entrada não
+    // podem ser alterados. Cor continua livre — não faz diferença estrutural.
     if (stage.kind !== 'default') {
       if (data.label !== undefined && data.label !== stage.label) {
         throw new ForbiddenException('Esta etapa é fixa e não pode ser renomeada');
@@ -112,16 +110,12 @@ export class CrmStagesService {
       if (data.isEntryStage) {
         throw new ForbiddenException('Esta etapa é fixa e não pode ser a etapa de entrada');
       }
-      if (stage.kind === 'won' && data.triggersConversion === false) {
-        throw new ForbiddenException('A etapa Ganho sempre dispara a conversão — não é possível desativar');
-      }
     }
 
     const labelChanged = data.label !== undefined && data.label !== stage.label;
 
     if (data.label !== undefined) stage.label = data.label;
     if (data.color !== undefined) stage.color = data.color;
-    if (data.triggersConversion !== undefined) stage.triggersConversion = data.triggersConversion;
     if (data.isEntryStage !== undefined) {
       // Só uma etapa de entrada por cliente — marcar esta desmarca as outras
       if (data.isEntryStage) await this.clearEntryStage(stage.customerId, id);

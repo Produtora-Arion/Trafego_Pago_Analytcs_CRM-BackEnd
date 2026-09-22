@@ -24,7 +24,7 @@ export class CrmStagesController {
   @Post()
   create(@Body() body: CreateCrmStageDto, @Req() req: any) {
     const customerId = this.tenant(req) ?? body.customerId;
-    return this.service.create(customerId!, body.label, body.color, body.triggersConversion ?? false, body.isEntryStage ?? false);
+    return this.service.create(customerId!, body.label, body.color, body.isEntryStage ?? false);
   }
 
   @Patch('reorder')

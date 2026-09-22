@@ -10,11 +10,11 @@ describe('CrmStagesService — imutabilidade das etapas Ganho/Perdido', () => {
 
   const wonStage: CrmStage = {
     id: 1, customerId: 'c1', label: 'Ganho', color: '#22c55e',
-    position: 2, triggersConversion: true, isEntryStage: false, code: 'ABC123', kind: 'won',
+    position: 2, isEntryStage: false, code: 'ABC123', kind: 'won',
   };
   const defaultStage: CrmStage = {
     id: 2, customerId: 'c1', label: 'Em Atendimento', color: '#f59e0b',
-    position: 1, triggersConversion: false, isEntryStage: false, code: 'DEF456', kind: 'default',
+    position: 1, isEntryStage: false, code: 'DEF456', kind: 'default',
   };
 
   beforeEach(() => {
@@ -30,11 +30,6 @@ describe('CrmStagesService — imutabilidade das etapas Ganho/Perdido', () => {
   it('bloqueia renomear a etapa Ganho', async () => {
     stagesRepo.findOne.mockResolvedValue({ ...wonStage });
     await expect(service.update(1, { label: 'Novo Nome' }, 'c1')).rejects.toThrow(ForbiddenException);
-  });
-
-  it('bloqueia desativar triggersConversion na etapa Ganho', async () => {
-    stagesRepo.findOne.mockResolvedValue({ ...wonStage });
-    await expect(service.update(1, { triggersConversion: false }, 'c1')).rejects.toThrow(ForbiddenException);
   });
 
   it('bloqueia marcar a etapa Ganho como etapa de entrada', async () => {

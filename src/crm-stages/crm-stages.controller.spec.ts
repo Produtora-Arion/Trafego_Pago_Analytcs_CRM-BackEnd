@@ -42,7 +42,7 @@ describe('CrmStagesController — isolamento multi-tenant', () => {
 
   it('cliente criando etapa pra outro customerId é forçado pro próprio', async () => {
     await controller.create({ customerId: OTHER_CUSTOMER, label: 'Nova', color: '#000' }, clientReq);
-    expect(service.create).toHaveBeenCalledWith(CLIENT_OWN, 'Nova', '#000', false, false);
+    expect(service.create).toHaveBeenCalledWith(CLIENT_OWN, 'Nova', '#000', false);
   });
 
   it('cliente reordenando etapas é forçado pro próprio customerId', async () => {
