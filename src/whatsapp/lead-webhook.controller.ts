@@ -56,11 +56,25 @@ export class LeadWebhookController {
     customerId: string,
     conversionActionId: string | null,
   ): Promise<void> {
-    if (!conversionActionId || !lead.gclid) return;
+    if (!conversionActionId) {
+      await this.leads.markFormConversionUploadFailed(lead.id, 'Conversion Action ID de Formulário Enviado não configurado nesta conta.');
+      return;
+    }
+    if (!lead.gclid) {
+      await this.leads.markFormConversionUploadFailed(lead.id, 'Lead sem gclid — não veio de um clique de anúncio rastreável.');
+      return;
+    }
     try {
-      await this.googleAds.uploadOfflineConversion(customerId, lead.gclid, conversionActionId, new Date(), 0, lead.phone);
+      const result = await this.googleAds.uploadOfflineConversion(customerId, lead.gclid, conversionActionId, new Date(), 0, lead.phone);
+      if (result.success) {
+        await this.leads.markFormConversionUploaded(lead.id);
+      } else {
+        this.logger.error(`Falha ao subir conversão secundária "formulário enviado" — lead #${lead.id}: ${result.detail}`);
+        await this.leads.markFormConversionUploadFailed(lead.id, 'O Google recusou o envio — ver logs do servidor pro detalhe técnico.');
+      }
     } catch (err) {
-      this.logger.error('Falha ao subir conversão secundária "formulário enviado"', err);
+      this.logger.error(`Falha ao subir conversão secundária "formulário enviado" — lead #${lead.id}`, err);
+      await this.leads.markFormConversionUploadFailed(lead.id, 'Erro de conexão ao enviar pro Google — ver logs do servidor.');
     }
   }
 

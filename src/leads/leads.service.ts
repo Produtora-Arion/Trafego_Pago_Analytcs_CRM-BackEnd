@@ -218,6 +218,16 @@ export class LeadsService {
     await this.repo.update(id, { conversionUploadError: reason });
   }
 
+  /** Mesmo par acima, mas pra conversão SECUNDÁRIA "Formulário Enviado" — campos
+   * próprios (formConversionUploadedAt/Error), nunca mexe nos do Ganho. */
+  async markFormConversionUploaded(id: number): Promise<void> {
+    await this.repo.update(id, { formConversionUploadedAt: new Date(), formConversionUploadError: null });
+  }
+
+  async markFormConversionUploadFailed(id: number, reason: string): Promise<void> {
+    await this.repo.update(id, { formConversionUploadError: reason });
+  }
+
   /** Move o lead pra etapa fixa "Perdido", registrando o motivo escolhido. */
   async markLost(
     id: number,

@@ -113,6 +113,20 @@ export class Lead {
   @Column({ nullable: true, type: 'text' })
   conversionUploadError: string | null;
 
+  /** Quando o envio da conversão SECUNDÁRIA "Formulário Enviado" (disparada uma
+   * vez, no primeiro contato deste lead) foi confirmado aceito pelo Google. */
+  @Column({ nullable: true })
+  formConversionUploadedAt: Date;
+
+  /**
+   * Motivo do envio da conversão secundária "Formulário Enviado" ter falhado.
+   * Diferente de `conversionUploadError` (Ganho): este é só pra uso interno —
+   * o frontend só mostra pra admin, nunca pro cliente, porque é ruído técnico
+   * de infraestrutura, não informação sobre o lead em si.
+   */
+  @Column({ nullable: true, type: 'text' })
+  formConversionUploadError: string | null;
+
   /** Lembretes definidos manualmente — até 3 por lead. JSON: [{id, date, text}] */
   @Column({ nullable: true, type: 'text' })
   reminders: string;
