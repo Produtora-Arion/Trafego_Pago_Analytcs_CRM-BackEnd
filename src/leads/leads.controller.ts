@@ -52,6 +52,7 @@ export class LeadsController {
       lead.convertedAt,
       lead.conversionValue ?? 0,
       lead.phone,
+      lead.email,
     );
 
     if (success) {
@@ -70,10 +71,9 @@ export class LeadsController {
 
   /**
    * Envia uma conversão SECUNDÁRIA (formulário enviado / perdido) — mesmo
-   * mecanismo do "Ganho" acima, mas melhor-esforço: não grava status no
-   * lead (essas colunas são só pro fluxo principal de conversão), nunca
-   * lança erro pro chamador. Sem gclid ou sem o ID configurado, simplesmente
-   * não faz nada — é sinal a mais pro Google, não algo crítico de negócio.
+   * mecanismo do "Ganho" acima, mas melhor-esforço: nunca lança erro pro
+   * chamador (não pode derrubar o fluxo principal de mover/perder um lead).
+   * Grava o resultado nos campos formConversionUploadedAt/Error.
    */
   private async uploadSecondaryConversion(
     lead: Lead,
@@ -96,19 +96,37 @@ export class LeadsController {
         new Date(),
         0,
         lead.phone,
+        lead.email,
       );
       if (result.success) {
         await this.leads.markFormConversionUploaded(lead.id);
       } else {
-        // best-effort — nunca deve derrubar o fluxo principal (criar lead / marcar perdido)
+        // best-effort — nunca deve derrubar o fluxo principal (mover/perder um lead)
         console.error(`[uploadSecondaryConversion] Google recusou — lead #${lead.id}:`, result.detail);
         await this.leads.markFormConversionUploadFailed(lead.id, 'O Google recusou o envio — ver logs do servidor pro detalhe técnico.');
       }
     } catch (err) {
-      // best-effort — nunca deve derrubar o fluxo principal (criar lead / marcar perdido)
+      // best-effort — nunca deve derrubar o fluxo principal (mover/perder um lead)
       console.error(`[uploadSecondaryConversion] falha ao subir conversão secundária — lead #${lead.id}:`, err);
       await this.leads.markFormConversionUploadFailed(lead.id, 'Erro de conexão ao enviar pro Google — ver logs do servidor.');
     }
+  }
+
+  /**
+   * Dispara "Formulário Enviado" na primeira vez que o lead sai de "Novo
+   * Lead" pra qualquer outra etapa — Em Atendimento, Negociação, Falta
+   * Documento, Ganho, ou Perdido por motivo legítimo. Nunca repete pro mesmo
+   * lead (guarda por formConversionUploadedAt/Error — se já tentou antes,
+   * com sucesso ou não, não tenta de novo). `skip=true` é usado só pelo caso
+   * "saiu direto de Novo Lead pra Perdido com motivo Fantasma/Desqualificado"
+   * (ver lose()) — aí nunca foi um contato validado de verdade.
+   */
+  private async maybeUploadFormConversion(lead: Lead, skip = false): Promise<void> {
+    if (skip) return;
+    if (lead.formConversionUploadedAt || lead.formConversionUploadError) return;
+    if (!lead.customerId) return;
+    const formActionId = await this.webhookConfig.getFormSubmittedConversionActionId(lead.customerId);
+    void this.uploadSecondaryConversion(lead, lead.customerId, formActionId);
   }
 
   /** Cliente sempre força o próprio customerId (nunca confia no query param); admin pode listar tudo ou filtrar. */
@@ -228,21 +246,15 @@ export class LeadsController {
     };
   }
 
-  /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um. */
+  /** Cliente sempre força o próprio customerId (nunca confia no body); admin pode informar qualquer um.
+   * "Formulário Enviado" NÃO dispara aqui — só chegar em "Novo Lead" não prova
+   * nada ainda; dispara em maybeUploadFormConversion, na primeira vez que o
+   * lead sai dessa etapa (ver updateStage/lose/convert abaixo). */
   @Post()
   async create(@Body() body: CreateLeadDto, @Req() req: any) {
     const tenantId = this.tenant(req);
     if (tenantId) body.customerId = tenantId;
-    const { lead, isNew } = await this.leads.upsertFromWebhook(body);
-
-    // Conversão secundária "formulário enviado" — só na primeira vez que esta
-    // pessoa aparece (isNew), nunca de novo em eventos subsequentes dela.
-    const customerId = lead.customerId;
-    if (isNew && customerId) {
-      const formActionId = await this.webhookConfig.getFormSubmittedConversionActionId(customerId);
-      void this.uploadSecondaryConversion(lead, customerId, formActionId);
-    }
-
+    const { lead } = await this.leads.upsertFromWebhook(body);
     return lead;
   }
 
@@ -274,7 +286,9 @@ export class LeadsController {
   async updateStage(@Param('id') id: string, @Body('stageId') stageId: number, @Req() req: any) {
     const tenantId = this.tenant(req);
     const stage = await this.crmStages.findById(Number(stageId), tenantId);
-    return this.leads.updateStage(Number(id), stage.id, stage.label, tenantId);
+    const lead = await this.leads.updateStage(Number(id), stage.id, stage.label, tenantId);
+    void this.maybeUploadFormConversion(lead);
+    return lead;
   }
 
   /**
@@ -298,6 +312,17 @@ export class LeadsController {
     const reason = await this.lossReasons.findById(Number(lossReasonId), tenantId);
     if (!reason.active) throw new BadRequestException('Este motivo está desativado — escolha outro');
 
+    // Precisa da etapa de ANTES de mover, pra saber se saiu direto de "Novo
+    // Lead" — único caso em que "Formulário Enviado" não deve disparar junto
+    // com a perda (ver maybeUploadFormConversion abaixo).
+    const leadAntes = await this.leads.findScoped(Number(id), tenantId);
+    const ruim = reason.kind === 'fantasma' || reason.kind === 'desqualificado';
+    let saiuDiretoDeNovoLead = false;
+    if (ruim && leadAntes.customerId) {
+      const entryStage = await this.crmStages.findEntryStage(leadAntes.customerId);
+      saiuDiretoDeNovoLead = !!entryStage && leadAntes.stageId === entryStage.id;
+    }
+
     const lead = await this.leads.markLost(Number(id), stage.id, stage.label, reason.id, tenantId);
 
     // Conversão secundária "Lead Desqualificado" — só dispara quando o
@@ -306,10 +331,15 @@ export class LeadsController {
     // (preço, não se enquadra, documentação, não respondeu) é tráfego bom
     // que só não fechou — reportar isso ensinaria o algoritmo a evitar
     // tráfego de qualidade só porque a taxa de fechamento não é 100%.
-    if (lead.customerId && (reason.kind === 'fantasma' || reason.kind === 'desqualificado')) {
+    if (lead.customerId && ruim) {
       const lostActionId = await this.webhookConfig.getLostConversionActionId(lead.customerId);
       await this.uploadSecondaryConversion(lead, lead.customerId, lostActionId);
     }
+
+    // "Formulário Enviado" dispara normalmente mesmo em perda — exceto quando
+    // saiu direto de "Novo Lead" pra Fantasma/Desqualificado: nesse caso
+    // nunca foi um contato validado de verdade, então não vira sinal nenhum.
+    void this.maybeUploadFormConversion(lead, ruim && saiuDiretoDeNovoLead);
 
     return lead;
   }
@@ -351,6 +381,9 @@ export class LeadsController {
       resolvedStageId,
       stageLabel,
     );
+
+    // Fechar negócio também conta como "saiu de Novo Lead" — dispara se ainda não tinha.
+    void this.maybeUploadFormConversion(lead);
 
     if (lead.gclid) {
       const { success, detail } = await this.attemptGoogleUpload(lead, customerId);

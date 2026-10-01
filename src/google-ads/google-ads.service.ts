@@ -920,6 +920,7 @@ export class GoogleAdsService implements OnModuleInit {
     convertedAt: Date,
     value: number,
     phone?: string,
+    email?: string,
   ): Promise<{ success: boolean; detail?: string }> {
     const cleanId = this.numId(customerId, 'customerId');
     const managerId = this.numId(
@@ -944,15 +945,17 @@ export class GoogleAdsService implements OnModuleInit {
       return { success: false, detail: 'Falha na autenticação com o Google' };
     }
 
-    // Conversões Aprimoradas: telefone com hash SHA-256, além do gclid — dá ao
-    // Google um segundo sinal pra confirmar a conversão (e alimentar o Smart
-    // Bidding) mesmo quando o gclid se perde por bloqueio de cookie/rastreio
-    // entre o clique e a conversão. Nunca falha o upload por conta disso —
-    // um telefone ausente/curto demais só significa "sem esse sinal extra".
+    // Conversões Aprimoradas: telefone e e-mail com hash SHA-256, além do
+    // gclid — cada identificador extra é mais um sinal pro Google confirmar a
+    // conversão (e alimentar o Smart Bidding) mesmo quando o gclid se perde
+    // por bloqueio de cookie/rastreio entre o clique e a conversão. Nunca
+    // falha o upload por conta disso — faltando um ou os dois, só significa
+    // "sem esse sinal extra", o gclid sozinho já é suficiente pro upload.
     const normalizedPhone = phone ? normalizePhoneE164(phone) : null;
-    const userData = normalizedPhone
-      ? { userIdentifiers: [{ phoneNumber: sha256Hex(normalizedPhone) }] }
-      : undefined;
+    const userIdentifiers: Record<string, string>[] = [];
+    if (normalizedPhone) userIdentifiers.push({ phoneNumber: sha256Hex(normalizedPhone) });
+    if (email && email.includes('@')) userIdentifiers.push({ emailAddress: sha256Hex(email) });
+    const userData = userIdentifiers.length > 0 ? { userIdentifiers } : undefined;
 
     const body = {
       destinations: [{
