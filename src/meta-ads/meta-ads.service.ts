@@ -206,6 +206,32 @@ export class MetaAdsService {
     });
   }
 
+  /**
+   * Métricas dia a dia de um conjunto de campanhas — usado pelo Relatório
+   * Mensal pra montar a quebra semanal (time_increment='1' pede o insights
+   * já segmentado por dia numa chamada só, em vez de uma por semana).
+   */
+  async getCampaignInsightsDaily(token: string, accountId: string, campaignIds: string[], dateRange: string) {
+    if (campaignIds.length === 0) return [];
+    const d = this.dateParams(dateRange);
+    const filtering = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: campaignIds }]);
+
+    const data = await this.get<any>(token, `/${accountId}/insights`, {
+      fields: 'campaign_id,campaign_name,impressions,clicks,spend,actions',
+      level: 'campaign', time_increment: '1', filtering, limit: '500', ...d,
+    });
+
+    return (data.data ?? []).map((r: any) => ({
+      data: r.date_start,
+      campanha_id: r.campaign_id,
+      campanha_nome: r.campaign_name,
+      impressoes: Number(r.impressions ?? 0),
+      cliques: Number(r.clicks ?? 0),
+      custo: Number(r.spend ?? 0),
+      conversoes: this.action(r.actions, 'onsite_conversion.total_messaging_connection'),
+    }));
+  }
+
   // ─── Ad Sets (equivalent of keywords for Meta) ────────────────────────────
 
   async listAdSets(token: string, accountId: string, campaignId: string, dateRange = 'LAST_7_DAYS') {

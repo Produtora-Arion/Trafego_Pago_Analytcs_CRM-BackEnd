@@ -221,6 +221,37 @@ export class GoogleAdsService implements OnModuleInit {
     });
   }
 
+  /**
+   * Métricas dia a dia de um conjunto de campanhas — usado pelo Relatório
+   * Mensal pra montar a quebra semanal (ele agrupa os dias em semanas, essa
+   * função só devolve o dado bruto por dia). Uma chamada só pro mês inteiro,
+   * em vez de uma por semana — mais leve pra API do Google.
+   */
+  async getCampaignMetricsDaily(customerId: string, campaignIds: string[], dateRange: string) {
+    const customer = this.getCustomer(customerId);
+    const ids = campaignIds.map((id) => this.numId(id, 'campaignId')).join(',');
+    if (!ids) return [];
+
+    const rows = await customer.query(`
+      SELECT segments.date, campaign.id, campaign.name,
+        metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+      FROM campaign
+      WHERE campaign.id IN (${ids})
+        AND segments.date ${this.buildDateFilter(dateRange)}
+      ORDER BY segments.date ASC
+    `);
+
+    return rows.map((r) => ({
+      data: r.segments.date,
+      campanha_id: String(r.campaign.id),
+      campanha_nome: r.campaign.name,
+      impressoes: Number(r.metrics.impressions),
+      cliques: Number(r.metrics.clicks),
+      custo: Number(r.metrics.cost_micros) / 1_000_000,
+      conversoes: Number(r.metrics.conversions),
+    }));
+  }
+
   async getCampaignDetails(
     customerId: string,
     campaignId: string,

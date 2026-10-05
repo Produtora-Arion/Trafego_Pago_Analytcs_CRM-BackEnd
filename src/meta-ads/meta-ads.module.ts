@@ -7,5 +7,6 @@ import { WebhookConfigModule } from '../webhook-config/webhook-config.module';
   imports: [WebhookConfigModule],
   providers: [MetaAdsService],
   controllers: [MetaAdsController],
+  exports: [MetaAdsService],
 })
 export class MetaAdsModule {}

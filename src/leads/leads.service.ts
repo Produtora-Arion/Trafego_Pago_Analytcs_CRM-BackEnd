@@ -99,6 +99,20 @@ export class LeadsService {
     return rows.map((r) => ({ stageId: r.stageId !== null ? Number(r.stageId) : null, count: Number(r.count) }));
   }
 
+  /** Todos os leads chegados no mês (YYYY-MM) — usado pelo Relatório Mensal
+   * pra calcular contagem semanal, etapa final e motivo de perda em um só lugar. */
+  async findInMonth(customerId: string, month: string): Promise<Lead[]> {
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    return this.repo
+      .createQueryBuilder('lead')
+      .where('lead.customerId = :customerId', { customerId })
+      .andWhere('lead.firstContactAt >= :start', { start })
+      .andWhere('lead.firstContactAt < :end', { end })
+      .getMany();
+  }
+
   async findByPhone(phone: string): Promise<Lead | null> {
     return this.repo.findOne({ where: { phone } });
   }
