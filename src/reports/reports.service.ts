@@ -90,12 +90,7 @@ export class ReportsService {
   async generate(customerId: string, month: string): Promise<any> {
     if (!/^\d{4}-\d{2}$/.test(month)) throw new BadRequestException('month deve estar no formato YYYY-MM');
 
-    const monthStart = `${month}-01`;
-    const end = new Date(`${month}-01T00:00:00.000Z`);
-    end.setUTCMonth(end.getUTCMonth() + 1);
-    end.setUTCDate(end.getUTCDate() - 1);
-    const monthEnd = end.toISOString().slice(0, 10);
-    const dateRange = `CUSTOM:${monthStart}:${monthEnd}`;
+    const { monthEnd, dateRange } = this.monthDateRange(month);
 
     // 1. Resolve quais campanhas entram — seleção salva, ou (sem seleção) todas as ativas do mês.
     const selection = await this.getSelection(customerId);
@@ -112,12 +107,18 @@ export class ReportsService {
         .map((c: any) => this.selectionRepo.create({ customerId, platform: 'meta' as const, campaignId: c.id, campaignName: c.nome }));
     }
 
-    // 2. Busca dado dia a dia das campanhas selecionadas.
-    const [googleDaily, metaDaily] = await Promise.all([
+    // 2. Busca dado dia a dia das campanhas selecionadas, demográficos (só Google — Meta
+    // não entra aqui) e os 2 meses anteriores (só totais, pro comparativo de tendência).
+    const [googleDaily, metaDaily, demograficos, mesM1, mesM2] = await Promise.all([
       googleCampaigns.length
         ? this.googleAds.getCampaignMetricsDaily(customerId, googleCampaigns.map((c) => c.campaignId), dateRange)
         : Promise.resolve([]),
       this.fetchMetaDaily(customerId, metaCampaigns, dateRange),
+      googleCampaigns.length
+        ? this.googleAds.getDemographicsForCampaigns(customerId, googleCampaigns.map((c) => c.campaignId), dateRange)
+        : Promise.resolve({ idade: [], genero: [], renda: [] }),
+      this.fetchMonthSummary(customerId, this.shiftMonth(month, -1), googleCampaigns, metaCampaigns),
+      this.fetchMonthSummary(customerId, this.shiftMonth(month, -2), googleCampaigns, metaCampaigns),
     ]);
 
     const allDaily: DailyRow[] = [...googleDaily, ...metaDaily];
@@ -205,7 +206,80 @@ export class ReportsService {
       ...metaCampaigns.map((c) => ({ plataforma: 'Meta Ads', nome: c.campaignName ?? c.campaignId })),
     ];
 
-    return { mes: month, campanhas, semanas, totais, funil, insights };
+    const mesAtualResumo = { mes: month, ...totais, fechamentos: funil.fechamento_mes.ganhos };
+    const meses = [mesM2, mesM1, mesAtualResumo];
+    const comparativo = { meses, analise: this.buildComparativoInsights(meses) };
+
+    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo };
+  }
+
+  /** Início/fim de um mês 'YYYY-MM' + a string de dateRange que as APIs de ads entendem. */
+  private monthDateRange(month: string): { monthStart: string; monthEnd: string; dateRange: string } {
+    const monthStart = `${month}-01`;
+    const end = new Date(`${month}-01T00:00:00.000Z`);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    end.setUTCDate(end.getUTCDate() - 1);
+    const monthEnd = end.toISOString().slice(0, 10);
+    return { monthStart, monthEnd, dateRange: `CUSTOM:${monthStart}:${monthEnd}` };
+  }
+
+  /** 'YYYY-MM' deslocado em n meses (n negativo = passado). */
+  private shiftMonth(month: string, n: number): string {
+    const d = new Date(`${month}-01T00:00:00.000Z`);
+    d.setUTCMonth(d.getUTCMonth() + n);
+    return d.toISOString().slice(0, 7);
+  }
+
+  /** Só os totais do mês (sem semanas) — usado pros 2 meses anteriores no comparativo,
+   * que não precisam do detalhe semanal, só do total pra comparar. */
+  private async fetchMonthSummary(
+    customerId: string,
+    month: string,
+    googleCampaigns: { campaignId: string }[],
+    metaCampaigns: { campaignId: string; accountId?: string | null }[],
+  ) {
+    const { dateRange } = this.monthDateRange(month);
+    const [googleDaily, metaDaily, leadsFechados, stages] = await Promise.all([
+      googleCampaigns.length
+        ? this.googleAds.getCampaignMetricsDaily(customerId, googleCampaigns.map((c) => c.campaignId), dateRange)
+        : Promise.resolve([]),
+      this.fetchMetaDaily(customerId, metaCampaigns, dateRange),
+      this.leads.findChangedInMonth(customerId, month),
+      this.crmStages.findAll(customerId),
+    ]);
+    const stageMap = new Map(stages.map((s) => [s.id, s]));
+    const fechamentos = leadsFechados.filter((l) => {
+      const stage = l.stageId !== null ? stageMap.get(l.stageId) : undefined;
+      return stage?.kind === 'won';
+    }).length;
+    const totais = this.sumRows([...googleDaily, ...metaDaily]);
+    return { mes: month, ...totais, fechamentos };
+  }
+
+  /** Comparações calculadas em cima dos 3 meses — nunca texto inventado. */
+  private buildComparativoInsights(meses: { mes: string; custo: number; conversoes: number; fechamentos: number }[]): string {
+    const comGasto = meses.filter((m) => m.custo > 0);
+    if (comGasto.length < 2) return '';
+
+    const atual = meses[meses.length - 1];
+    const anterior = meses[meses.length - 2];
+    const linhas: string[] = [];
+
+    if (anterior.custo > 0) {
+      const deltaCusto = ((atual.custo - anterior.custo) / anterior.custo) * 100;
+      linhas.push(`Investimento ${deltaCusto >= 0 ? 'subiu' : 'caiu'} ${Math.abs(deltaCusto).toFixed(0)}% em relação ao mês anterior.`);
+    }
+    if (anterior.conversoes > 0) {
+      const deltaConv = ((atual.conversoes - anterior.conversoes) / anterior.conversoes) * 100;
+      linhas.push(`Conversões ${deltaConv >= 0 ? 'subiram' : 'caíram'} ${Math.abs(deltaConv).toFixed(0)}% em relação ao mês anterior.`);
+    } else if (atual.conversoes > 0) {
+      linhas.push('O mês anterior não teve conversões registradas.');
+    }
+    if (atual.fechamentos !== anterior.fechamentos) {
+      linhas.push(`Fechamentos: ${atual.fechamentos} esse mês vs ${anterior.fechamentos} no mês anterior.`);
+    }
+
+    return linhas.join(' ');
   }
 
   private async fetchMetaDaily(
