@@ -22,10 +22,10 @@ export class ReportCampaignSelection {
   campaignId: string;
 
   /** Nome no momento em que foi selecionada — só referência visual na tela de configuração. */
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   campaignName: string | null;
 
   /** Pra Meta, a campanha pertence a um ad account específico — precisa pra consultar a API depois. */
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   accountId: string | null;
 }
