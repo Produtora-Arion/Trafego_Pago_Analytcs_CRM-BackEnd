@@ -113,6 +113,21 @@ export class LeadsService {
       .getMany();
   }
 
+  /** Leads que MUDARAM de etapa dentro do mês (pra achar quem fechou/foi perdido no
+   * mês, independente de quando chegou) — diferente de findInMonth, que filtra por
+   * chegada. O caller filtra por stage.kind (won/lost) em cima do resultado. */
+  async findChangedInMonth(customerId: string, month: string): Promise<Lead[]> {
+    const start = new Date(`${month}-01T00:00:00.000Z`);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    return this.repo
+      .createQueryBuilder('lead')
+      .where('lead.customerId = :customerId', { customerId })
+      .andWhere('lead.statusChangedAt >= :start', { start })
+      .andWhere('lead.statusChangedAt < :end', { end })
+      .getMany();
+  }
+
   async findByPhone(phone: string): Promise<Lead | null> {
     return this.repo.findOne({ where: { phone } });
   }
