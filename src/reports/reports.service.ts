@@ -30,12 +30,6 @@ interface WeekBucket {
   cpc_medio: string;
   custo_por_conversao: string;
   leads_recebidos: number;
-  /** Frase calculada em cima do dado real dessa semana — nunca inventada.
-   * A observação da Pâmela (se houver) é só ACRESCENTADA a isso no frontend,
-   * nunca reescreve o que já foi calculado. */
-  insight: string;
-  /** Preenchido pela Pâmela ao gerar a prévia — vazio por padrão. */
-  observacao: string;
 }
 
 @Injectable()
@@ -135,8 +129,9 @@ export class ReportsService {
     const totais = this.sumRows(allDaily);
 
     // 5. Dado do CRM — leads recebidos (por semana, já embutido acima), etapa final e motivo de perda.
-    const [leadsDoMes, stages, reasons] = await Promise.all([
+    const [leadsDoMes, leadsFechadosNoMes, stages, reasons] = await Promise.all([
       this.leads.findInMonth(customerId, month),
+      this.leads.findChangedInMonth(customerId, month),
       this.crmStages.findAll(customerId),
       this.lossReasons.findAll(customerId),
     ]);
@@ -147,19 +142,23 @@ export class ReportsService {
         return d >= semana.de && d <= semana.ate;
       }).length;
     }
-    this.buildWeeklyInsights(semanas);
-
     const stageMap = new Map(stages.map((s) => [s.id, s]));
     const reasonMap = new Map(reasons.map((r) => [r.id, r]));
     const porEtapa = new Map<string, number>();
     const porMotivoPerda = new Map<string, number>();
     let qualificados = 0;
     let ganhos = 0;
+    let perdidos = 0;
     for (const lead of leadsDoMes) {
       const stage = lead.stageId !== null ? stageMap.get(lead.stageId) : undefined;
-      const label = stage?.label ?? '(etapa removida)';
-      porEtapa.set(label, (porEtapa.get(label) ?? 0) + 1);
       if (stage?.kind === 'won') ganhos++;
+      else if (stage?.kind === 'lost') perdidos++;
+      else {
+        // Só as etapas "em andamento" (nem ganho nem perdido) — Ganho/Perdido já
+        // têm contador próprio, não precisam aparecer de novo aqui.
+        const label = stage?.label ?? '(etapa removida)';
+        porEtapa.set(label, (porEtapa.get(label) ?? 0) + 1);
+      }
       if (lead.formConversionUploadedAt) qualificados++;
       if (stage?.kind === 'lost' && lead.lossReasonId) {
         const reason = reasonMap.get(lead.lossReasonId);
@@ -168,12 +167,35 @@ export class ReportsService {
       }
     }
 
+    // Fechamento do mês: diferente do bloco acima (que olha quem CHEGOU no mês),
+    // aqui é quem MUDOU pra Ganho/Perdido dentro do mês, não importa quando chegou —
+    // é o "resultado do mês" que bate com o que fechou de fato.
+    let ganhosFechadosNoMes = 0;
+    let perdidosFechadosNoMes = 0;
+    const porMotivoPerdaFechadosNoMes = new Map<string, number>();
+    for (const lead of leadsFechadosNoMes) {
+      const stage = lead.stageId !== null ? stageMap.get(lead.stageId) : undefined;
+      if (stage?.kind === 'won') ganhosFechadosNoMes++;
+      if (stage?.kind === 'lost') {
+        perdidosFechadosNoMes++;
+        const reason = lead.lossReasonId ? reasonMap.get(lead.lossReasonId) : undefined;
+        const label = reason?.label ?? '(motivo removido)';
+        porMotivoPerdaFechadosNoMes.set(label, (porMotivoPerdaFechadosNoMes.get(label) ?? 0) + 1);
+      }
+    }
+
     const funil = {
       total_leads: leadsDoMes.length,
       leads_qualificados: qualificados,
       ganhos,
-      por_etapa: Array.from(porEtapa.entries()).map(([etapa, quantidade]) => ({ etapa, quantidade })),
+      perdidos,
+      em_andamento_por_etapa: Array.from(porEtapa.entries()).map(([etapa, quantidade]) => ({ etapa, quantidade })),
       motivos_de_perda: Array.from(porMotivoPerda.entries()).map(([motivo, quantidade]) => ({ motivo, quantidade })),
+      fechamento_mes: {
+        ganhos: ganhosFechadosNoMes,
+        perdidos: perdidosFechadosNoMes,
+        motivos_de_perda: Array.from(porMotivoPerdaFechadosNoMes.entries()).map(([motivo, quantidade]) => ({ motivo, quantidade })),
+      },
     };
 
     const insights = this.buildInsights(semanas, funil);
@@ -210,7 +232,7 @@ export class ReportsService {
         de, ate,
         impressoes: 0, cliques: 0, custo: 0, conversoes: 0,
         ctr: '0.00%', cpc_medio: 'R$ 0,00', custo_por_conversao: 'Sem conversões',
-        leads_recebidos: 0, insight: '', observacao: '',
+        leads_recebidos: 0,
       });
     }
     for (const row of rows) {
@@ -236,36 +258,6 @@ export class ReportsService {
    * mais barata, melhor custo por conversão) só quando há mais de uma semana
    * com gasto pra comparar.
    */
-  private buildWeeklyInsights(semanas: WeekBucket[]): void {
-    const comSpend = semanas.filter((s) => s.custo > 0);
-    const maisCara = comSpend.length > 1 ? [...comSpend].sort((a, b) => b.custo - a.custo)[0] : null;
-    const maisBarata = comSpend.length > 1 ? [...comSpend].sort((a, b) => a.custo - b.custo)[0] : null;
-    const comConversao = comSpend.filter((s) => s.conversoes > 0);
-    const melhorCusto = comConversao.length > 1
-      ? [...comConversao].sort((a, b) => (a.custo / a.conversoes) - (b.custo / b.conversoes))[0]
-      : null;
-
-    for (const semana of semanas) {
-      if (semana.custo === 0) {
-        semana.insight = 'Sem investimento registrado nesta semana.';
-        continue;
-      }
-      const partes: string[] = [
-        `R$ ${semana.custo.toFixed(2)} investidos, ${semana.cliques} cliques, ${semana.conversoes} conversão(ões).`,
-      ];
-      if (semana.conversoes === 0) {
-        partes.push('Nenhuma conversão registrada apesar do investimento.');
-      }
-      if (semana.leads_recebidos > 0) {
-        partes.push(`${semana.leads_recebidos} lead(s) chegaram no CRM nesse período.`);
-      }
-      if (maisCara && maisCara.label === semana.label) partes.push('Foi a semana de maior investimento do mês.');
-      if (maisBarata && maisBarata.label === semana.label) partes.push('Foi a semana de menor investimento do mês.');
-      if (melhorCusto && melhorCusto.label === semana.label) partes.push('Teve o melhor custo por conversão do mês.');
-      semana.insight = partes.join(' ');
-    }
-  }
-
   private sumRows(rows: DailyRow[]) {
     const t = { impressoes: 0, cliques: 0, custo: 0, conversoes: 0 };
     for (const r of rows) {
