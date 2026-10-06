@@ -836,6 +836,94 @@ export class GoogleAdsService implements OnModuleInit {
     };
   }
 
+  /** Mesma ideia de getDemographics, mas pra várias campanhas de uma vez (IN em vez de
+   * igualdade) — usado no relatório mensal, que trabalha com a seleção inteira do cliente. */
+  async getDemographicsForCampaigns(customerId: string, campaignIds: string[], dateRange: string) {
+    const customer = this.getCustomer(customerId);
+    const ids = campaignIds.map((id) => this.numId(id, 'campaignId')).join(',');
+    if (!ids) return { idade: [], genero: [], renda: [] };
+
+    const [ageRows, genderRows, incomeRows] = await Promise.all([
+      customer.query(`
+        SELECT
+          ad_group_criterion.age_range.type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM age_range_view
+        WHERE campaign.id IN (${ids})
+          AND segments.date ${this.buildDateFilter(dateRange)}
+      `),
+      customer.query(`
+        SELECT
+          ad_group_criterion.gender.type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM gender_view
+        WHERE campaign.id IN (${ids})
+          AND segments.date ${this.buildDateFilter(dateRange)}
+      `),
+      customer.query(`
+        SELECT
+          ad_group_criterion.income_range.type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions
+        FROM income_range_view
+        WHERE campaign.id IN (${ids})
+          AND segments.date ${this.buildDateFilter(dateRange)}
+      `),
+    ]);
+
+    const AGE: Record<number, string> = {
+      503001: '18–24', 503002: '25–34', 503003: '35–44',
+      503004: '45–54', 503005: '55–64', 503006: '65+', 503999: 'Desconhecido',
+    };
+    const GENDER: Record<number, string> = {
+      10: 'Masculino', 11: 'Feminino', 20: 'Desconhecido',
+    };
+    const INCOME: Record<number, string> = {
+      510000: 'Desconhecido', 510001: 'Abaixo de 50%', 510002: '50–60%', 510003: '60–70%',
+      510004: '70–80%', 510005: '80–90%', 510006: 'Acima de 90%', 510999: 'Desconhecido',
+    };
+
+    const aggregate = (
+      rows: any[],
+      keyFn: (r: any) => number,
+      labelMap: Record<number, string>,
+    ) => {
+      const map = new Map<number, any>();
+      for (const r of rows) {
+        const key = keyFn(r);
+        if (!map.has(key)) {
+          map.set(key, {
+            label: labelMap[key] ?? `Tipo ${key}`,
+            impressoes: 0, cliques: 0, custo: 0, conversoes: 0,
+          });
+        }
+        const d = map.get(key);
+        d.impressoes += Number(r.metrics.impressions);
+        d.cliques += Number(r.metrics.clicks);
+        d.custo += Number(r.metrics.cost_micros) / 1_000_000;
+        d.conversoes += Number(r.metrics.conversions);
+      }
+      return Array.from(map.values())
+        .filter((d) => d.impressoes > 0)
+        .sort((a, b) => b.conversoes - a.conversoes)
+        .map((d) => ({ ...d, custo: Number(d.custo.toFixed(2)) }));
+    };
+
+    return {
+      idade: aggregate(ageRows, (r) => Number(r.ad_group_criterion.age_range?.type ?? 0), AGE),
+      genero: aggregate(genderRows, (r) => Number(r.ad_group_criterion.gender?.type ?? 0), GENDER),
+      renda: aggregate(incomeRows, (r) => Number(r.ad_group_criterion.income_range?.type ?? 0), INCOME),
+    };
+  }
+
   async getDayOfWeek(
     customerId: string,
     campaignId: string,
