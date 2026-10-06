@@ -26,6 +26,9 @@ import { TrackedUrlFormSubmission } from './tracked-urls/tracked-url-form-submis
 import { HotmartModule } from './hotmart/hotmart.module';
 import { HotmartClickRef } from './hotmart/hotmart-click-ref.entity';
 import { HotmartSale } from './hotmart/hotmart-sale.entity';
+import { ReportsModule } from './reports/reports.module';
+import { MonthlyReport } from './reports/monthly-report.entity';
+import { ReportCampaignSelection } from './reports/report-campaign-selection.entity';
 
 @Module({
   imports: [
@@ -42,6 +45,7 @@ import { HotmartSale } from './hotmart/hotmart-sale.entity';
           Lead, CrmStage, WebhookToken, PageViewDaily, LossReason,
           TrackedUrl, TrackedUrlAccessEvent, TrackedUrlButtonEvent, TrackedUrlFormSubmission,
           HotmartClickRef, HotmartSale,
+          MonthlyReport, ReportCampaignSelection,
         ],
         // Schema gerenciado via SQL direto no Supabase — não usar synchronize
         synchronize: false,
@@ -59,6 +63,7 @@ import { HotmartSale } from './hotmart/hotmart-sale.entity';
     TrackedUrlsModule,
     AuthModule,
     HotmartModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [
