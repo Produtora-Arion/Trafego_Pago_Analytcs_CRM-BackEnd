@@ -30,6 +30,12 @@ interface WeekBucket {
   cpc_medio: string;
   custo_por_conversao: string;
   leads_recebidos: number;
+  /** Frase calculada em cima do dado real dessa semana — nunca inventada.
+   * A observação da Pâmela (se houver) é só ACRESCENTADA a isso no frontend,
+   * nunca reescreve o que já foi calculado. */
+  insight: string;
+  /** Preenchido pela Pâmela ao gerar a prévia — vazio por padrão. */
+  observacao: string;
 }
 
 @Injectable()
@@ -141,6 +147,7 @@ export class ReportsService {
         return d >= semana.de && d <= semana.ate;
       }).length;
     }
+    this.buildWeeklyInsights(semanas);
 
     const stageMap = new Map(stages.map((s) => [s.id, s]));
     const reasonMap = new Map(reasons.map((r) => [r.id, r]));
@@ -203,7 +210,7 @@ export class ReportsService {
         de, ate,
         impressoes: 0, cliques: 0, custo: 0, conversoes: 0,
         ctr: '0.00%', cpc_medio: 'R$ 0,00', custo_por_conversao: 'Sem conversões',
-        leads_recebidos: 0,
+        leads_recebidos: 0, insight: '', observacao: '',
       });
     }
     for (const row of rows) {
@@ -221,6 +228,42 @@ export class ReportsService {
       week.custo = Number(week.custo.toFixed(2));
     }
     return weeks;
+  }
+
+  /**
+   * Uma frase por semana, calculada em cima do dado real dela — nunca
+   * inventada. Compara com as outras semanas do mesmo relatório (mais cara,
+   * mais barata, melhor custo por conversão) só quando há mais de uma semana
+   * com gasto pra comparar.
+   */
+  private buildWeeklyInsights(semanas: WeekBucket[]): void {
+    const comSpend = semanas.filter((s) => s.custo > 0);
+    const maisCara = comSpend.length > 1 ? [...comSpend].sort((a, b) => b.custo - a.custo)[0] : null;
+    const maisBarata = comSpend.length > 1 ? [...comSpend].sort((a, b) => a.custo - b.custo)[0] : null;
+    const comConversao = comSpend.filter((s) => s.conversoes > 0);
+    const melhorCusto = comConversao.length > 1
+      ? [...comConversao].sort((a, b) => (a.custo / a.conversoes) - (b.custo / b.conversoes))[0]
+      : null;
+
+    for (const semana of semanas) {
+      if (semana.custo === 0) {
+        semana.insight = 'Sem investimento registrado nesta semana.';
+        continue;
+      }
+      const partes: string[] = [
+        `R$ ${semana.custo.toFixed(2)} investidos, ${semana.cliques} cliques, ${semana.conversoes} conversão(ões).`,
+      ];
+      if (semana.conversoes === 0) {
+        partes.push('Nenhuma conversão registrada apesar do investimento.');
+      }
+      if (semana.leads_recebidos > 0) {
+        partes.push(`${semana.leads_recebidos} lead(s) chegaram no CRM nesse período.`);
+      }
+      if (maisCara && maisCara.label === semana.label) partes.push('Foi a semana de maior investimento do mês.');
+      if (maisBarata && maisBarata.label === semana.label) partes.push('Foi a semana de menor investimento do mês.');
+      if (melhorCusto && melhorCusto.label === semana.label) partes.push('Teve o melhor custo por conversão do mês.');
+      semana.insight = partes.join(' ');
+    }
   }
 
   private sumRows(rows: DailyRow[]) {
