@@ -40,7 +40,7 @@ export class MonthlyReport {
   @Column({ default: false })
   releasedToClient: boolean;
 
-  @Column({ nullable: true })
+  @Column({ type: 'timestamp', nullable: true })
   releasedAt: Date | null;
 
   @CreateDateColumn()
