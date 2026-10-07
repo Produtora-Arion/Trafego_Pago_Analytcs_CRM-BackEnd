@@ -146,6 +146,12 @@ export class ReportsService {
     const stageMap = new Map(stages.map((s) => [s.id, s]));
     const reasonMap = new Map(reasons.map((r) => [r.id, r]));
     const porEtapa = new Map<string, number>();
+    // Pré-popula com TODAS as etapas "em andamento" do cliente, zeradas — assim uma
+    // etapa sem nenhum lead esse mês ainda aparece no relatório (com 0), igual ao
+    // Fechamento do mês já faz com Ganho/Perdido.
+    for (const s of stages) {
+      if (s.kind === 'default') porEtapa.set(s.label, 0);
+    }
     const porMotivoPerda = new Map<string, number>();
     let qualificados = 0;
     let ganhos = 0;
@@ -210,7 +216,7 @@ export class ReportsService {
     const meses = [mesM2, mesM1, mesAtualResumo];
     const comparativo = { meses, analise: this.buildComparativoInsights(meses) };
 
-    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo };
+    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo, recomendacoes: [] as string[] };
   }
 
   /** Início/fim de um mês 'YYYY-MM' + a string de dateRange que as APIs de ads entendem. */
