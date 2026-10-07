@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { IsEmail, IsInt, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Lead, LeadStatus } from './lead.entity';
 
@@ -126,6 +126,13 @@ export class LeadsService {
       .andWhere('lead.statusChangedAt >= :start', { start })
       .andWhere('lead.statusChangedAt < :end', { end })
       .getMany();
+  }
+
+  /** Total de leads do cliente em qualquer uma das etapas passadas — usado pro
+   * "total acumulado" de Ganho desde sempre, no relatório mensal. */
+  async countByStageIds(customerId: string, stageIds: number[]): Promise<number> {
+    if (stageIds.length === 0) return 0;
+    return this.repo.count({ where: { customerId, stageId: In(stageIds) } });
   }
 
   async findByPhone(phone: string): Promise<Lead | null> {

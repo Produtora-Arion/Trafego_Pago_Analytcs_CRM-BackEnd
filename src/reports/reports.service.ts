@@ -179,10 +179,14 @@ export class ReportsService {
     // é o "resultado do mês" que bate com o que fechou de fato.
     let ganhosFechadosNoMes = 0;
     let perdidosFechadosNoMes = 0;
+    let receitaFechadosNoMes = 0;
     const porMotivoPerdaFechadosNoMes = new Map<string, number>();
     for (const lead of leadsFechadosNoMes) {
       const stage = lead.stageId !== null ? stageMap.get(lead.stageId) : undefined;
-      if (stage?.kind === 'won') ganhosFechadosNoMes++;
+      if (stage?.kind === 'won') {
+        ganhosFechadosNoMes++;
+        receitaFechadosNoMes += lead.conversionValue ?? 0;
+      }
       if (stage?.kind === 'lost') {
         perdidosFechadosNoMes++;
         const reason = lead.lossReasonId ? reasonMap.get(lead.lossReasonId) : undefined;
@@ -190,6 +194,8 @@ export class ReportsService {
         porMotivoPerdaFechadosNoMes.set(label, (porMotivoPerdaFechadosNoMes.get(label) ?? 0) + 1);
       }
     }
+    const wonStageIds = stages.filter((s) => s.kind === 'won').map((s) => s.id);
+    const totalAcumuladoGanhos = await this.leads.countByStageIds(customerId, wonStageIds);
 
     const funil = {
       total_leads: leadsDoMes.length,
@@ -201,6 +207,8 @@ export class ReportsService {
       fechamento_mes: {
         ganhos: ganhosFechadosNoMes,
         perdidos: perdidosFechadosNoMes,
+        receita: Number(receitaFechadosNoMes.toFixed(2)),
+        totalAcumulado: totalAcumuladoGanhos,
         motivos_de_perda: Array.from(porMotivoPerdaFechadosNoMes.entries()).map(([motivo, quantidade]) => ({ motivo, quantidade })),
       },
     };
@@ -216,7 +224,7 @@ export class ReportsService {
     const meses = [mesM2, mesM1, mesAtualResumo];
     const comparativo = { meses, analise: this.buildComparativoInsights(meses) };
 
-    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo, recomendacoes: [] as string[] };
+    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo, recomendacoes: [] as string[], feeGestao: 0 };
   }
 
   /** Início/fim de um mês 'YYYY-MM' + a string de dateRange que as APIs de ads entendem. */
