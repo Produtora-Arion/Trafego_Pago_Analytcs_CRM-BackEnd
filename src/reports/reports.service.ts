@@ -213,8 +213,6 @@ export class ReportsService {
       },
     };
 
-    const insights = this.buildInsights(semanas, funil);
-
     const campanhas = [
       ...googleCampaigns.map((c) => ({ plataforma: 'Google Ads', nome: c.campaignName ?? c.campaignId })),
       ...metaCampaigns.map((c) => ({ plataforma: 'Meta Ads', nome: c.campaignName ?? c.campaignId })),
@@ -224,7 +222,7 @@ export class ReportsService {
     const meses = [mesM2, mesM1, mesAtualResumo];
     const comparativo = { meses, analise: this.buildComparativoInsights(meses) };
 
-    return { mes: month, campanhas, semanas, totais, funil, insights, demograficos, comparativo, recomendacoes: [] as string[], feeGestao: 0 };
+    return { mes: month, campanhas, semanas, totais, funil, demograficos, comparativo, recomendacoes: [] as string[], feeGestao: 0 };
   }
 
   /** Início/fim de um mês 'YYYY-MM' + a string de dateRange que as APIs de ads entendem. */
@@ -360,37 +358,6 @@ export class ReportsService {
     };
   }
 
-  /** Comparações calculadas em cima do dado real — nunca texto inventado. */
-  private buildInsights(semanas: WeekBucket[], funil: { total_leads: number; leads_qualificados: number }): string {
-    const comSpend = semanas.filter((s) => s.custo > 0);
-    if (comSpend.length === 0) return 'Sem gasto registrado neste período.';
-
-    const linhas: string[] = [];
-    const maisCara = [...comSpend].sort((a, b) => b.custo - a.custo)[0];
-    const maisBarata = [...comSpend].sort((a, b) => a.custo - b.custo)[0];
-    linhas.push(`${maisCara.label} teve o maior investimento (R$ ${maisCara.custo.toFixed(2)}).`);
-    if (maisBarata.label !== maisCara.label) {
-      linhas.push(`${maisBarata.label} teve o menor investimento (R$ ${maisBarata.custo.toFixed(2)}).`);
-    }
-
-    const comConversao = comSpend.filter((s) => s.conversoes > 0);
-    if (comConversao.length > 0) {
-      const melhorCusto = [...comConversao].sort((a, b) => (a.custo / a.conversoes) - (b.custo / b.conversoes))[0];
-      linhas.push(`${melhorCusto.label} teve o melhor custo por conversão (${melhorCusto.custo_por_conversao}).`);
-    }
-    const semConversao = comSpend.filter((s) => s.conversoes === 0);
-    if (semConversao.length > 0) {
-      linhas.push(`${semConversao.map((s) => s.label).join(', ')} não registrou nenhuma conversão apesar do investimento.`);
-    }
-
-    if (funil.total_leads > 0) {
-      const taxa = ((funil.leads_qualificados / funil.total_leads) * 100).toFixed(0);
-      linhas.push(`Dos ${funil.total_leads} leads recebidos no mês, ${funil.leads_qualificados} (${taxa}%) foram confirmados como contatos qualificados pela equipe.`);
-    }
-
-    return linhas.join(' ');
-  }
-
   // ─── CRUD dos relatórios salvos ─────────────────────────────────────────
 
   async create(customerId: string, month: string, data: any, observations: string | null): Promise<MonthlyReport> {
@@ -399,7 +366,7 @@ export class ReportsService {
       customerId, month,
       campaignNames,
       summaryData: JSON.stringify(data),
-      autoInsights: data.insights,
+      autoInsights: null,
       observations,
       releasedToClient: false,
       releasedAt: null,
