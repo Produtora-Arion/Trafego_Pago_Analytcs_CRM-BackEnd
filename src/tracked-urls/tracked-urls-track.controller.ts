@@ -75,7 +75,7 @@ export class TrackedUrlsTrackController {
   function getUtms() {
     var url = new URLSearchParams(window.location.search);
     var out = {};
-    ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function (k) {
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'].forEach(function (k) {
       var v = url.get(k);
       if (v) out[k] = v;
     });
@@ -222,10 +222,12 @@ export class TrackedUrlsTrackController {
     @Query('utm_source') utmSource: string | undefined,
     @Query('utm_medium') utmMedium: string | undefined,
     @Query('utm_campaign') utmCampaign: string | undefined,
+    @Query('utm_content') utmContent: string | undefined,
+    @Query('utm_term') utmTerm: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordAccess(slug, vid, utmSource, utmMedium, utmCampaign);
+    await this.service.recordAccess(slug, vid, utmSource, utmMedium, utmCampaign, utmContent, utmTerm);
     // Sempre 204 — não dá pra um script externo saber se o slug é válido.
     return res.status(204).send();
   }
@@ -241,10 +243,12 @@ export class TrackedUrlsTrackController {
     @Query('utm_medium') utmMedium: string | undefined,
     @Query('utm_campaign') utmCampaign: string | undefined,
     @Query('href') href: string | undefined,
+    @Query('utm_content') utmContent: string | undefined,
+    @Query('utm_term') utmTerm: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordClick(slug, label, vid, pos, utmSource, utmMedium, utmCampaign, href);
+    await this.service.recordClick(slug, label, vid, pos, utmSource, utmMedium, utmCampaign, href, utmContent, utmTerm);
     return res.status(204).send();
   }
 
@@ -260,10 +264,12 @@ export class TrackedUrlsTrackController {
     @Query('utm_source') utmSource: string | undefined,
     @Query('utm_medium') utmMedium: string | undefined,
     @Query('utm_campaign') utmCampaign: string | undefined,
+    @Query('utm_content') utmContent: string | undefined,
+    @Query('utm_term') utmTerm: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordView(slug, label, vid, pos, utmSource, utmMedium, utmCampaign);
+    await this.service.recordView(slug, label, vid, pos, utmSource, utmMedium, utmCampaign, utmContent, utmTerm);
     return res.status(204).send();
   }
 
@@ -277,10 +283,12 @@ export class TrackedUrlsTrackController {
     @Query('utm_source') utmSource: string | undefined,
     @Query('utm_medium') utmMedium: string | undefined,
     @Query('utm_campaign') utmCampaign: string | undefined,
+    @Query('utm_content') utmContent: string | undefined,
+    @Query('utm_term') utmTerm: string | undefined,
     @Res() res: Response,
   ) {
     this.cors(res);
-    await this.service.recordScroll(slug, Number(depth), vid, utmSource, utmMedium, utmCampaign);
+    await this.service.recordScroll(slug, Number(depth), vid, utmSource, utmMedium, utmCampaign, utmContent, utmTerm);
     return res.status(204).send();
   }
 

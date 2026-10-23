@@ -35,8 +35,31 @@ function removeAccents(str: string): string {
   }).join('');
 }
 
+/**
+ * Alguns links de anúncio chegam com a UTM codificada duas vezes (ex: o texto já
+ * veio com "%7C"/"%20" e foi codificado de novo ao montar a URL final do anúncio).
+ * O `URLSearchParams` do pixel só desfaz UMA camada, então sobra "%7C"/"%2F"/"+"
+ * literal no valor — decodifica de novo aqui (até 3 camadas, parando se não mudar
+ * mais ou se a sequência não for percent-encoding válido) pra nunca gravar esses
+ * resíduos no banco.
+ */
+function decodeResidual(v: string): string {
+  let out = v;
+  for (let i = 0; i < 3; i++) {
+    if (!/%[0-9A-Fa-f]{2}/.test(out)) break;
+    try {
+      const next = decodeURIComponent(out);
+      if (next === out) break;
+      out = next;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
 function cleanUtm(v?: string): string | null {
-  const t = v?.trim().slice(0, MAX_UTM_LEN);
+  const t = v ? decodeResidual(v).trim().slice(0, MAX_UTM_LEN) : undefined;
   return t ? t : null;
 }
 
@@ -78,6 +101,8 @@ export type TrackedUrlUtmRow = {
   source: string;
   medium: string;
   campaign: string;
+  content: string | null;
+  term: string | null;
   totalAccess: number;
   uniqueAccess: number;
 };
@@ -135,6 +160,8 @@ export type TrackedUrlButtonUtmRow = {
   source: string;
   medium: string;
   campaign: string;
+  content: string | null;
+  term: string | null;
   total: number;
   unique: number;
 };
@@ -265,6 +292,8 @@ export class TrackedUrlsService {
     utmSource?: string,
     utmMedium?: string,
     utmCampaign?: string,
+    utmContent?: string,
+    utmTerm?: string,
   ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
@@ -277,6 +306,8 @@ export class TrackedUrlsService {
       utmSource: cleanUtm(utmSource),
       utmMedium: cleanUtm(utmMedium),
       utmCampaign: cleanUtm(utmCampaign),
+      utmContent: cleanUtm(utmContent),
+      utmTerm: cleanUtm(utmTerm),
     });
     await this.accessRepo.save(event);
     return true;
@@ -286,16 +317,18 @@ export class TrackedUrlsService {
   async recordClick(
     slug: string, label?: string, visitorId?: string, pos?: string,
     utmSource?: string, utmMedium?: string, utmCampaign?: string, href?: string,
+    utmContent?: string, utmTerm?: string,
   ): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'click', label, visitorId, pos, utmSource, utmMedium, utmCampaign, href);
+    return this.recordButtonEvent(slug, 'click', label, visitorId, pos, utmSource, utmMedium, utmCampaign, href, utmContent, utmTerm);
   }
 
   /** Botão apareceu na tela da pessoa (impressão) — mesmo label/visitorId do clique, pra dar CTR e único. */
   async recordView(
     slug: string, label?: string, visitorId?: string, pos?: string,
     utmSource?: string, utmMedium?: string, utmCampaign?: string,
+    utmContent?: string, utmTerm?: string,
   ): Promise<boolean> {
-    return this.recordButtonEvent(slug, 'view', label, visitorId, pos, utmSource, utmMedium, utmCampaign);
+    return this.recordButtonEvent(slug, 'view', label, visitorId, pos, utmSource, utmMedium, utmCampaign, undefined, utmContent, utmTerm);
   }
 
   /**
@@ -307,14 +340,16 @@ export class TrackedUrlsService {
   async recordScroll(
     slug: string, depth: number, visitorId?: string,
     utmSource?: string, utmMedium?: string, utmCampaign?: string,
+    utmContent?: string, utmTerm?: string,
   ): Promise<boolean> {
     const safeDepth = Number.isFinite(depth) ? Math.max(0, Math.min(100, Math.round(depth))) : 0;
-    return this.recordButtonEvent(slug, 'scroll', String(safeDepth), visitorId, undefined, utmSource, utmMedium, utmCampaign);
+    return this.recordButtonEvent(slug, 'scroll', String(safeDepth), visitorId, undefined, utmSource, utmMedium, utmCampaign, undefined, utmContent, utmTerm);
   }
 
   private async recordButtonEvent(
     slug: string, type: 'click' | 'view' | 'scroll', label?: string, visitorId?: string, pos?: string,
     utmSource?: string, utmMedium?: string, utmCampaign?: string, href?: string,
+    utmContent?: string, utmTerm?: string,
   ): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
@@ -334,6 +369,8 @@ export class TrackedUrlsService {
       utmSource: cleanUtm(utmSource),
       utmMedium: cleanUtm(utmMedium),
       utmCampaign: cleanUtm(utmCampaign),
+      utmContent: cleanUtm(utmContent),
+      utmTerm: cleanUtm(utmTerm),
       href: href?.trim().slice(0, MAX_HREF_LEN) || null,
     });
     await this.buttonRepo.save(event);
@@ -379,12 +416,16 @@ export class TrackedUrlsService {
       .select('a.utmSource', 'source')
       .addSelect('a.utmMedium', 'medium')
       .addSelect('a.utmCampaign', 'campaign')
+      .addSelect('a.utmContent', 'content')
+      .addSelect('a.utmTerm', 'term')
       .addSelect('COUNT(*)', 'totalAccess')
       .addSelect('COUNT(DISTINCT a.visitorId)', 'uniqueAccess')
       .where('a.trackedUrlId = :id', { id })
       .groupBy('a.utmSource')
       .addGroupBy('a.utmMedium')
       .addGroupBy('a.utmCampaign')
+      .addGroupBy('a.utmContent')
+      .addGroupBy('a.utmTerm')
       .orderBy('"totalAccess"', 'DESC');
     if (from) qb.andWhere('a.date >= :from', { from });
     if (to) qb.andWhere('a.date <= :to', { to });
@@ -393,6 +434,8 @@ export class TrackedUrlsService {
       source: r.source ?? DIRECT_LABEL,
       medium: r.medium ?? DIRECT_LABEL,
       campaign: r.campaign ?? DIRECT_LABEL,
+      content: r.content ?? null,
+      term: r.term ?? null,
       totalAccess: Number(r.totalAccess),
       uniqueAccess: Number(r.uniqueAccess),
     }));
@@ -642,6 +685,8 @@ export class TrackedUrlsService {
       .select('b.utmSource', 'source')
       .addSelect('b.utmMedium', 'medium')
       .addSelect('b.utmCampaign', 'campaign')
+      .addSelect('b.utmContent', 'content')
+      .addSelect('b.utmTerm', 'term')
       .addSelect('COUNT(*)', 'total')
       .addSelect('COUNT(DISTINCT b.visitorId)', 'unique')
       .where('b.trackedUrlId = :id', { id })
@@ -649,6 +694,8 @@ export class TrackedUrlsService {
       .groupBy('b.utmSource')
       .addGroupBy('b.utmMedium')
       .addGroupBy('b.utmCampaign')
+      .addGroupBy('b.utmContent')
+      .addGroupBy('b.utmTerm')
       .orderBy('"total"', 'DESC');
     if (from) qb.andWhere('b.date >= :from', { from });
     if (to) qb.andWhere('b.date <= :to', { to });
@@ -657,6 +704,8 @@ export class TrackedUrlsService {
       source: r.source ?? DIRECT_LABEL,
       medium: r.medium ?? DIRECT_LABEL,
       campaign: r.campaign ?? DIRECT_LABEL,
+      content: r.content ?? null,
+      term: r.term ?? null,
       total: Number(r.total),
       unique: Number(r.unique),
     }));

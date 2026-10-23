@@ -30,4 +30,10 @@ export class TrackedUrlAccessEvent {
 
   @Column({ type: 'varchar', nullable: true })
   utmCampaign: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  utmContent: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  utmTerm: string | null;
 }
