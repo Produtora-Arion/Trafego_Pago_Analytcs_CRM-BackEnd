@@ -45,6 +45,12 @@ export class TrackedUrlButtonEvent {
   @Column({ type: 'varchar', nullable: true })
   utmCampaign: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  utmContent: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  utmTerm: string | null;
+
   /**
    * Destino real do clique (ex: "https://pay.hotmart.com/..." ou a própria
    * página + "#comprar") — capturado do .href resolvido pelo navegador, sem
