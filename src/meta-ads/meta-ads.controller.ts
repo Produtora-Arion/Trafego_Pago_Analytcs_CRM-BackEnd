@@ -1,15 +1,20 @@
 import { BadRequestException, Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { MetaAdsService } from './meta-ads.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
-import { SupabaseAuthGuard, AdminOnlyGuard } from '../auth/supabase-auth.guard';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 
 /**
  * Cada cliente tem seu próprio Business Manager no Meta — não existe uma MCC
  * central como no Google Ads. Por isso toda rota é escopada por customerId: o
  * token certo é resolvido aqui (nunca é fixo/global) antes de chamar o service.
+ *
+ * Sem AdminOnlyGuard de propósito — igual ao Google, o cliente deve enxergar
+ * os dados da própria conta (isolamento por customerId já vem do
+ * SupabaseAuthGuard). Com AdminOnlyGuard aqui, nenhum login de cliente
+ * conseguia ver a aba Meta, mesmo com Meta Ads configurado na conta dele.
  */
 @Controller('meta')
-@UseGuards(SupabaseAuthGuard, AdminOnlyGuard)
+@UseGuards(SupabaseAuthGuard)
 export class MetaAdsController {
   constructor(
     private readonly meta: MetaAdsService,
