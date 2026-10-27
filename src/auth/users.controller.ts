@@ -42,6 +42,10 @@ export class UsersController {
       name: u.user_metadata?.name ?? null,
       role: u.app_metadata?.role ?? 'client',
       customerId: u.app_metadata?.customer_id ?? null,
+      // Cópia em texto puro guardada só pra admin conseguir ver/repassar a senha
+      // depois — o Supabase Auth em si só guarda o hash (nunca recuperável).
+      // Ver aviso de segurança no comentário acima de createUser().
+      password: u.user_metadata?.plain_password ?? null,
       createdAt: u.created_at,
       lastSignInAt: u.last_sign_in_at ?? null,
     };
@@ -54,6 +58,12 @@ export class UsersController {
     return data.users.map((u) => this.mapUser(u));
   }
 
+  /**
+   * ATENÇÃO: guardamos a senha em texto puro em user_metadata.plain_password
+   * só pra admin conseguir ver/repassar depois (pedido explícito — o Supabase
+   * Auth em si nunca expõe a senha de volta, só o hash). Isto é um trade-off
+   * de segurança ciente: se este banco vazar, essas senhas vazam também.
+   */
   @Post()
   async create(@Body() body: CreateUserDto) {
     if (!body.email || !body.password) {
@@ -74,7 +84,7 @@ export class UsersController {
         role: body.role,
         customer_id: body.role === 'client' ? body.customerId : null,
       },
-      user_metadata: { name: body.name ?? null },
+      user_metadata: { name: body.name ?? null, plain_password: body.password },
     });
     if (error) throw new BadRequestException(error.message);
     return this.mapUser(data.user);
@@ -98,7 +108,17 @@ export class UsersController {
         ...(body.customerId !== undefined ? { customer_id: body.customerId } : {}),
       };
     }
-    if (body.name !== undefined) attrs.user_metadata = { name: body.name };
+    if (body.name !== undefined || body.password) {
+      // user_metadata é substituído por inteiro pelo Supabase — busca o atual
+      // pra não apagar o nome ao trocar só a senha (ou vice-versa).
+      const { data: existing, error: fetchErr } = await this.admin.auth.admin.getUserById(id);
+      if (fetchErr) throw new BadRequestException(fetchErr.message);
+      attrs.user_metadata = {
+        ...existing.user.user_metadata,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.password ? { plain_password: body.password } : {}),
+      };
+    }
 
     const { data, error } = await this.admin.auth.admin.updateUserById(id, attrs);
     if (error) throw new BadRequestException(error.message);
