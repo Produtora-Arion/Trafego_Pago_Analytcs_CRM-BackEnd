@@ -14,5 +14,6 @@ import { TrackedUrlsTrackController } from './tracked-urls-track.controller';
   ])],
   controllers: [TrackedUrlsController, TrackedUrlsTrackController],
   providers: [TrackedUrlsService],
+  exports: [TrackedUrlsService],
 })
 export class TrackedUrlsModule {}

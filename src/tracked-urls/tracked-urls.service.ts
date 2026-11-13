@@ -213,13 +213,55 @@ export class TrackedUrlsService {
     return sanitized ? `${sanitized}-${code}` : `url-${code}`;
   }
 
-  async create(name: string, url: string): Promise<TrackedUrl> {
-    const entry = this.repo.create({ name, url, slug: this.generateSlug(name) });
+  async create(name: string, url: string, customerId?: string): Promise<TrackedUrl> {
+    const entry = this.repo.create({ name, url, slug: this.generateSlug(name), customerId: customerId || undefined });
     return this.repo.save(entry);
   }
 
-  async findAll(): Promise<TrackedUrlWithTotals[]> {
-    const urls = await this.repo.find({ order: { createdAt: 'DESC' } });
+  /** Ignora querystring/hash e barra final/protocolo — usado pra achar a URL
+   * cadastrada de uma conta a partir da landingPage que o lead informou, sem
+   * que um "?utm_source=..." diferente quebre o match. */
+  private normalizeUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      return `${u.hostname.replace(/^www\./, '')}${u.pathname}`.replace(/\/+$/, '').toLowerCase();
+    } catch {
+      return url.trim().toLowerCase();
+    }
+  }
+
+  /** URL cadastrada e ativa dessa conta cuja URL bate (ignorando querystring)
+   * com a landingPage recebida — null se a conta não tem URL cadastrada ou
+   * nenhuma bate. */
+  private async findActiveByCustomerAndUrl(customerId: string, landingPage: string): Promise<TrackedUrl | null> {
+    const target = this.normalizeUrl(landingPage);
+    const candidates = await this.repo.find({ where: { customerId, active: true } });
+    return candidates.find((c) => this.normalizeUrl(c.url) === target) ?? null;
+  }
+
+  /**
+   * Chamado pelo webhook de lead real (LeadWebhookController) — só grava
+   * "formulário enviado" quando o lead de fato chegou no CRM, diferente do
+   * clique do pixel (que dispara mesmo se o envio falhar). Nunca lança erro:
+   * se a conta não tiver URL cadastrada, ou nada bater, simplesmente não grava
+   * nada — jamais pode derrubar a criação do lead em si.
+   */
+  async recordFormFromLead(customerId: string, landingPage: string | undefined, data: unknown): Promise<void> {
+    if (!customerId || !landingPage) return;
+    try {
+      const entry = await this.findActiveByCustomerAndUrl(customerId, landingPage);
+      if (!entry) return;
+      await this.saveSubmission(entry.id, data);
+    } catch {
+      // melhor esforço — nunca deve afetar o fluxo do webhook de lead
+    }
+  }
+
+  async findAll(customerId?: string): Promise<TrackedUrlWithTotals[]> {
+    const urls = await this.repo.find({
+      where: customerId ? { customerId } : {},
+      order: { createdAt: 'DESC' },
+    });
     if (urls.length === 0) return [];
 
     const [access, clicks, views, forms] = await Promise.all([
@@ -381,17 +423,19 @@ export class TrackedUrlsService {
   async recordForm(slug: string, data: unknown): Promise<boolean> {
     const entry = await this.findActiveBySlug(slug);
     if (!entry) return false;
+    await this.saveSubmission(entry.id, data);
+    return true;
+  }
 
+  private async saveSubmission(trackedUrlId: number, data: unknown): Promise<void> {
     const safeData = data && typeof data === 'object' ? data : {};
     const json = JSON.stringify(safeData).slice(0, MAX_FORM_DATA_LEN);
-
     const submission = this.submissionRepo.create({
-      trackedUrlId: entry.id,
+      trackedUrlId,
       date: todayBrasilia(),
       data: json,
     });
     await this.submissionRepo.save(submission);
-    return true;
   }
 
   async getMetrics(id: number, from?: string, to?: string): Promise<TrackedUrlMetricDay[]> {

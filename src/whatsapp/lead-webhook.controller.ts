@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import { LeadsService, CreateLeadDto } from '../leads/leads.service';
 import { WebhookConfigService } from '../webhook-config/webhook-config.service';
 import { CrmStagesService } from '../crm-stages/crm-stages.service';
+import { TrackedUrlsService } from '../tracked-urls/tracked-urls.service';
 
 /** Campos reconhecidos do payload — o restante vai para extraData */
 const KNOWN_FIELDS = new Set([
@@ -41,6 +42,7 @@ export class LeadWebhookController {
     private readonly leads: LeadsService,
     private readonly webhookConfig: WebhookConfigService,
     private readonly crmStages: CrmStagesService,
+    private readonly trackedUrls: TrackedUrlsService,
   ) {}
 
   @SkipThrottle()
@@ -146,6 +148,13 @@ export class LeadWebhookController {
       // que é um contato real.
       const { lead } = await this.leads.upsertFromWebhook(dto);
       this.logger.log(`Lead recebido via webhook ${slug} → #${lead.id} (${phone || email})`);
+
+      // Melhor esforço — "formulário enviado" confiável na URL Analisada
+      // (/urls), vinculado pela landingPage. Nunca pode afetar a resposta do
+      // webhook: erro aqui é só logado, o lead já foi salvo de qualquer jeito.
+      this.trackedUrls.recordFormFromLead(customerId, dto.landingPage, body).catch((err) => {
+        this.logger.warn(`Webhook ${slug}: falha ao registrar formulário na URL Analisada — ${err?.message || err}`);
+      });
 
       return res.status(201).json({ success: true, id: lead.id });
     } catch (err) {
