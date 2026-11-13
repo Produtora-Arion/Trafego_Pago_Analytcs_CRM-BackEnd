@@ -10,13 +10,13 @@ export class TrackedUrlsController {
   constructor(private readonly service: TrackedUrlsService) {}
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('customerId') customerId?: string) {
+    return this.service.findAll(customerId || undefined);
   }
 
   @Post()
   create(@Body() body: CreateTrackedUrlDto) {
-    return this.service.create(body.name, body.url);
+    return this.service.create(body.name, body.url, body.customerId);
   }
 
   @Patch(':id')

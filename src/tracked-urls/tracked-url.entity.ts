@@ -19,6 +19,11 @@ export class TrackedUrl {
   @Column({ default: true })
   active: boolean;
 
+  /** Conta/cliente (customerId do CRM) a que essa URL pertence — opcional, URL
+   * continua podendo existir solta (sem vínculo) como sempre funcionou. */
+  @Column({ nullable: true })
+  customerId?: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }
